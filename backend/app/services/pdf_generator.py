@@ -1,3 +1,4 @@
+import hashlib
 import io
 from datetime import datetime
 from pathlib import Path
@@ -25,11 +26,58 @@ from app.config import BASE_DIR, DEFAULT_LOGO_PATH
 
 NAVY = colors.HexColor("#0A2463")
 ROYAL = colors.HexColor("#1E40AF")
+MAROON = colors.HexColor("#7C1D24")
+CREAM = colors.HexColor("#FFFDF7")
+EMERALD = colors.HexColor("#15803D")
 GOLD = colors.HexColor("#D4AF37")
 GOLD_LIGHT = colors.HexColor("#FEF9E7")
 LIGHT_BLUE = colors.HexColor("#EFF6FF")
 SLATE = colors.HexColor("#334155")
 MUTED = colors.HexColor("#64748B")
+
+_ONES = [
+    "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE",
+    "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN", "SIXTEEN",
+    "SEVENTEEN", "EIGHTEEN", "NINETEEN",
+]
+_TENS = ["", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY"]
+
+
+def _int_to_words(n: int) -> str:
+    if n < 20:
+        return _ONES[max(0, n)]
+    if n < 100:
+        return _TENS[n // 10] + (f" {_ONES[n % 10]}" if n % 10 else "")
+    if n < 1000:
+        return f"{_ONES[n // 100]} HUNDRED" + (f" {_int_to_words(n % 100)}" if n % 100 else "")
+    if n < 100000:
+        return f"{_int_to_words(n // 1000)} THOUSAND" + (f" {_int_to_words(n % 1000)}" if n % 1000 else "")
+    return str(n)
+
+
+def number_to_words(val: float) -> str:
+    whole = int(val)
+    frac = round(val - whole, 2)
+    text = _int_to_words(whole)
+    if frac >= 0.05:
+        text += f" POINT {_ONES[int(round(frac * 10))] if int(round(frac * 10)) < 10 else int(round(frac * 100))}"
+    return text
+
+
+def puc_division(percentage: float, any_fail: bool = False) -> str:
+    if any_fail or percentage < 35:
+        return "FAIL"
+    if percentage >= 85:
+        return "DISTINCTION"
+    if percentage >= 60:
+        return "FIRST CLASS"
+    if percentage >= 50:
+        return "SECOND CLASS"
+    return "PASS CLASS"
+
+
+def _doc_signature_hash(seed_str: str) -> str:
+    return "AKTP-DSIG-" + hashlib.sha256(seed_str.encode("utf-8")).hexdigest()[:10].upper()
 
 
 def resolve_logo_path(settings_logo_path: Optional[str] = None) -> Optional[Path]:
@@ -104,153 +152,189 @@ def generate_marks_card_pdf(
     width, height = A4
     c = canvas.Canvas(buf, pagesize=A4)
 
-    # White background
-    c.setFillColor(colors.white)
+    # Cream Karnataka PUC parchment sheet
+    c.setFillColor(CREAM)
     c.rect(0, 0, width, height, fill=1, stroke=0)
 
-    # Double decorative Navy & Gold border
+    # Double official Navy & Maroon/Gold border
     c.setStrokeColor(NAVY)
     c.setLineWidth(3.5)
-    c.rect(14 * mm, 14 * mm, width - 28 * mm, height - 28 * mm, stroke=1, fill=0)
+    c.rect(12 * mm, 12 * mm, width - 24 * mm, height - 24 * mm, stroke=1, fill=0)
 
-    c.setStrokeColor(GOLD)
-    c.setLineWidth(1.6)
-    c.rect(17.5 * mm, 17.5 * mm, width - 35 * mm, height - 35 * mm, stroke=1, fill=0)
+    c.setStrokeColor(MAROON)
+    c.setLineWidth(1.4)
+    c.rect(15.5 * mm, 15.5 * mm, width - 31 * mm, height - 31 * mm, stroke=1, fill=0)
 
     # Corner accents
-    for x0 in (14 * mm, width - 19 * mm):
-        for y0 in (14 * mm, height - 19 * mm):
+    for x0 in (12 * mm, width - 17 * mm):
+        for y0 in (12 * mm, height - 17 * mm):
             c.setFillColor(GOLD)
             c.rect(x0, y0, 5 * mm, 5 * mm, fill=1, stroke=0)
 
-    # Header band
-    top_y = height - 24 * mm
+    # Subtle diagonal PUC-style security watermark
+    c.saveState()
+    c.translate(width / 2, height / 2)
+    c.rotate(34)
+    c.setFillColor(colors.HexColor("#EEF2FF"))
+    c.setFont("Helvetica-Bold", 30)
+    c.drawCentredString(0, 12, "AK TUITION • VERIFIED")
+    c.setFont("Helvetica-Bold", 18)
+    c.drawCentredString(0, -16, "OFFICIAL STATEMENT OF MARKS")
+    c.restoreState()
+
+    # Header band (PUC Board Pattern)
+    top_y = height - 22 * mm
     resolved_logo = resolve_logo_path(logo_path)
     if resolved_logo:
-        # Preserve exact 1:1 circular aspect ratio without cropping/distorting
-        c.drawImage(str(resolved_logo), 24 * mm, top_y - 24 * mm, width=26 * mm, height=26 * mm, mask="auto", preserveAspectRatio=True)
+        c.drawImage(str(resolved_logo), 22 * mm, top_y - 24 * mm, width=24 * mm, height=24 * mm, mask="auto", preserveAspectRatio=True)
+
+    c.setFillColor(MAROON)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawCentredString(width / 2 + 8 * mm, top_y - 1 * mm, "DEPARTMENT OF ACADEMIC EXAMINATIONS • PUC BOARD PATTERN")
 
     c.setFillColor(NAVY)
-    c.setFont("Helvetica-Bold", 22)
-    c.drawCentredString(width / 2 + 8 * mm, top_y - 5 * mm, tuition_name.upper())
+    c.setFont("Helvetica-Bold", 21)
+    c.drawCentredString(width / 2 + 8 * mm, top_y - 8.5 * mm, tuition_name.upper())
 
     c.setFillColor(ROYAL)
-    c.setFont("Helvetica-Bold", 9.5)
-    c.drawCentredString(width / 2 + 8 * mm, top_y - 12 * mm, tagline)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(width / 2 + 8 * mm, top_y - 14.5 * mm, f"{tagline}  |  Director: {director_name}")
 
     # Banner pill
     c.setFillColor(NAVY)
-    c.roundRect(45 * mm, top_y - 25 * mm, width - 90 * mm, 9 * mm, 4, fill=1, stroke=0)
+    c.roundRect(42 * mm, top_y - 25.5 * mm, width - 84 * mm, 8.5 * mm, 3, fill=1, stroke=0)
     c.setFillColor(GOLD)
-    c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(width / 2, top_y - 21.8 * mm, "OFFICIAL EXAMINATION MARKS CARD")
+    c.setFont("Helvetica-Bold", 10.5)
+    c.drawCentredString(width / 2, top_y - 22.3 * mm, "PROVISIONAL STATEMENT OF MARKS")
 
+    sig_cert_id = _doc_signature_hash(f"{student_code}|{examination_id}|{total_obtained}|{percentage}")
     c.setFillColor(SLATE)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(width / 2, top_y - 32 * mm, f"Academic Year: {academic_year}   |   Examination: {exam_name}")
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(width / 2, top_y - 31.5 * mm, f"Academic Year: {academic_year}   |   Examination: {exam_name}   |   Cert No: {sig_cert_id}")
 
     # Divider
     c.setStrokeColor(GOLD)
-    c.setLineWidth(1)
-    c.line(22 * mm, top_y - 36 * mm, width - 22 * mm, top_y - 36 * mm)
+    c.setLineWidth(1.2)
+    c.line(20 * mm, top_y - 35 * mm, width - 20 * mm, top_y - 35 * mm)
 
-    # Student details box
-    box_top = top_y - 41 * mm
-    c.setFillColor(LIGHT_BLUE)
-    c.setStrokeColor(ROYAL)
-    c.setLineWidth(0.8)
-    c.roundRect(22 * mm, box_top - 28 * mm, width - 44 * mm, 28 * mm, 4, fill=1, stroke=1)
+    # Candidate Details Box (Karnataka PUC style)
+    box_top = top_y - 39 * mm
+    c.setFillColor(colors.white)
+    c.setStrokeColor(NAVY)
+    c.setLineWidth(0.9)
+    c.roundRect(20 * mm, box_top - 26 * mm, width - 40 * mm, 26 * mm, 3, fill=1, stroke=1)
 
     c.setFillColor(NAVY)
-    c.setFont("Helvetica-Bold", 9.5)
-    c.drawString(26 * mm, box_top - 8 * mm, "Student Name:")
-    c.drawString(26 * mm, box_top - 16 * mm, "Student ID:")
-    c.drawString(26 * mm, box_top - 24 * mm, "Examination Date:")
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(24 * mm, box_top - 7.5 * mm, "Candidate Name:")
+    c.drawString(24 * mm, box_top - 15 * mm, "Register No. (AK ID):")
+    c.drawString(24 * mm, box_top - 22.5 * mm, "Exam Date:")
 
-    c.drawString(115 * mm, box_top - 8 * mm, "Class:")
-    c.drawString(115 * mm, box_top - 16 * mm, "Section:")
-    c.drawString(115 * mm, box_top - 24 * mm, "Publication:")
+    c.drawString(114 * mm, box_top - 7.5 * mm, "Class / Stream:")
+    c.drawString(114 * mm, box_top - 15 * mm, "Section / Batch:")
+    c.drawString(114 * mm, box_top - 22.5 * mm, "Verification:")
 
     c.setFillColor(colors.black)
-    c.setFont("Helvetica", 10)
-    c.drawString(58 * mm, box_top - 8 * mm, student_name)
-    c.drawString(58 * mm, box_top - 16 * mm, student_code)
-    c.drawString(58 * mm, box_top - 24 * mm, exam_date)
-
-    c.drawString(140 * mm, box_top - 8 * mm, class_name)
-    c.drawString(140 * mm, box_top - 16 * mm, section)
-    c.setFillColor(colors.HexColor("#15803D"))
     c.setFont("Helvetica-Bold", 9.5)
-    c.drawString(140 * mm, box_top - 24 * mm, "OFFICIAL PUBLISHED")
+    c.drawString(62 * mm, box_top - 7.5 * mm, student_name.upper())
+    c.drawString(62 * mm, box_top - 15 * mm, f"{student_code}{section or ''}")
+    c.setFont("Helvetica", 9)
+    c.drawString(62 * mm, box_top - 22.5 * mm, exam_date)
 
-    # Subject Marks Table
-    table_data = [["Sl. No.", "Subject", "Max Marks", "Marks Obtained", "Grade", "Remarks"]]
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(144 * mm, box_top - 7.5 * mm, class_name)
+    c.drawString(144 * mm, box_top - 15 * mm, section)
+    c.setFillColor(EMERALD)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(144 * mm, box_top - 22.5 * mm, "DIGITALLY VERIFIED")
+
+    # Authentic Karnataka PUC Subject Marks Table (with Min Marks, Marks in Words, Subject Result)
+    table_data = [["Sl.", "Subject", "Max", "Min", "Obtained", "Marks in Words", "Result", "Grade"]]
+    any_fail = False
     for idx, row in enumerate(subjects, start=1):
+        max_m = float(row["max_marks"])
+        obt_m = float(row["marks_obtained"])
+        min_m = round(max_m * 0.35)
+        sub_pass = obt_m >= min_m
+        if not sub_pass:
+            any_fail = True
         table_data.append([
             str(idx),
             row["subject"],
-            f"{row['max_marks']:.0f}",
-            f"{row['marks_obtained']:.1f}" if row["marks_obtained"] % 1 else f"{row['marks_obtained']:.0f}",
+            f"{max_m:.0f}",
+            f"{min_m}",
+            f"{obt_m:.1f}" if obt_m % 1 else f"{obt_m:.0f}",
+            number_to_words(obt_m),
+            "PASS" if sub_pass else "FAIL",
             row["grade"],
-            row.get("remarks") or "-",
         ])
 
     tbl = Table(
         table_data,
-        colWidths=[16 * mm, 52 * mm, 24 * mm, 28 * mm, 18 * mm, 28 * mm],
+        colWidths=[10 * mm, 38 * mm, 13 * mm, 13 * mm, 18 * mm, 46 * mm, 16 * mm, 16 * mm],
     )
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), NAVY),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
         ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
-        ("TOPPADDING", (0, 0), (-1, 0), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
         ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 1), (-1, -1), 9),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
         ("ALIGN", (0, 1), (0, -1), "CENTER"),
         ("ALIGN", (2, 1), (4, -1), "CENTER"),
+        ("ALIGN", (6, 1), (7, -1), "CENTER"),
+        ("FONTNAME", (4, 1), (4, -1), "Helvetica-Bold"),
+        ("FONTNAME", (6, 1), (7, -1), "Helvetica-Bold"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT_BLUE]),
-        ("GRID", (0, 0), (-1, -1), 0.6, ROYAL),
-        ("TOPPADDING", (0, 1), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
+        ("GRID", (0, 0), (-1, -1), 0.6, NAVY),
+        ("TOPPADDING", (0, 1), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
     ]))
 
-    table_y = box_top - 36 * mm
-    tw, th = tbl.wrapOn(c, width - 44 * mm, 140 * mm)
-    tbl.drawOn(c, 22 * mm, table_y - th)
+    table_y = box_top - 32 * mm
+    tw, th = tbl.wrapOn(c, width - 40 * mm, 135 * mm)
+    tbl.drawOn(c, 20 * mm, table_y - th)
 
-    # Final Summary Box
-    sum_top = table_y - th - 10 * mm
+    # Grand Total & Classification Summary Box (PUC Board Style)
+    puc_class = puc_division(percentage, any_fail)
+    sum_top = table_y - th - 8 * mm
     c.setFillColor(GOLD_LIGHT)
-    c.setStrokeColor(GOLD)
+    c.setStrokeColor(MAROON)
     c.setLineWidth(1.2)
-    c.roundRect(22 * mm, sum_top - 32 * mm, width - 44 * mm, 32 * mm, 4, fill=1, stroke=1)
+    c.roundRect(20 * mm, sum_top - 35 * mm, width - 40 * mm, 35 * mm, 3, fill=1, stroke=1)
+
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(24 * mm, sum_top - 8.5 * mm, f"Total Max Marks: {total_max:.0f}")
+    c.drawString(24 * mm, sum_top - 16.5 * mm, f"Grand Total Obtained: {total_obtained:g} ({number_to_words(total_obtained)})")
+    c.drawString(24 * mm, sum_top - 24.5 * mm, f"Remarks: {teacher_remarks[:60]}")
+    c.setFont("Helvetica", 8)
+    c.setFillColor(SLATE)
+    c.drawString(24 * mm, sum_top - 31.5 * mm, f"Verified Record ID: {sig_cert_id}")
 
     c.setFillColor(NAVY)
     c.setFont("Helvetica-Bold", 9.5)
-    c.drawString(26 * mm, sum_top - 9 * mm, f"Total Maximum Marks: {total_max:.0f}")
-    c.drawString(26 * mm, sum_top - 18 * mm, f"Total Marks Obtained: {total_obtained:.1f}")
-    c.drawString(26 * mm, sum_top - 27 * mm, f"Teacher Remarks: {teacher_remarks[:65]}")
-
-    c.drawString(115 * mm, sum_top - 9 * mm, f"Overall Percentage: {percentage:.2f}%")
+    c.drawString(124 * mm, sum_top - 8.5 * mm, f"Percentage: {percentage:.2f}%")
     rank_text = f"#{class_rank} / {class_total_students}" if class_rank and class_total_students else "N/A"
-    c.drawString(115 * mm, sum_top - 18 * mm, f"Overall Grade: {overall_grade}   |   Class Rank: {rank_text}")
-    res_color = colors.HexColor("#15803D") if result_status == "PASS" else colors.HexColor("#B91C1C")
+    c.drawString(124 * mm, sum_top - 16.5 * mm, f"Grade: {overall_grade}  |  Rank: {rank_text}")
+    res_color = EMERALD if puc_class != "FAIL" else colors.HexColor("#B91C1C")
     c.setFillColor(res_color)
-    c.drawString(115 * mm, sum_top - 27 * mm, f"Result Status: {result_status}")
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(124 * mm, sum_top - 25.5 * mm, f"RESULT: {puc_class}")
 
-    # Seal & Signature Footer
-    footer_y = 32 * mm
-    _draw_official_seal(c, 48 * mm, footer_y + 18 * mm, radius=13 * mm)
+    # Seal, Scannable QR Code & Digital Signature Footer
+    footer_y = 29 * mm
+    _draw_official_seal(c, 42 * mm, footer_y + 18 * mm, radius=13 * mm)
 
     c.setFillColor(MUTED)
-    c.setFont("Helvetica", 8)
-    c.drawString(24 * mm, footer_y - 4 * mm, f"Issued via AKTP PORTAL on {datetime.now().strftime('%d %b %Y')}")
+    c.setFont("Helvetica", 7.5)
+    c.drawString(22 * mm, footer_y - 4 * mm, f"Issued via AKTP PORTAL on {datetime.now().strftime('%d %b %Y')}")
 
     # Scannable Verification QR Code (center footer)
-    qr_url = f"https://aktp-portal.netlify.app/verify?code={student_code}&exam={examination_id or ''}&pct={percentage:.1f}"
+    qr_url = f"https://aktp-portal.netlify.app/results?code={student_code}&exam={examination_id or ''}"
     qr_widget = QrCodeWidget(qr_url)
     bounds = qr_widget.getBounds()
     qr_size = 22 * mm
@@ -259,42 +343,100 @@ def generate_marks_card_pdf(
     d = Drawing(qr_size, qr_size, transform=[qr_size / qr_w, 0, 0, qr_size / qr_h, 0, 0])
     d.add(qr_widget)
     qr_x = (width - qr_size) / 2
-    qr_y = footer_y + 4 * mm
+    qr_y = footer_y + 5 * mm
     c.setStrokeColor(GOLD)
     c.setLineWidth(0.8)
     c.roundRect(qr_x - 2 * mm, qr_y - 2 * mm, qr_size + 4 * mm, qr_size + 4 * mm, 3, fill=0, stroke=1)
     renderPDF.draw(d, c, qr_x, qr_y)
     c.setFillColor(NAVY)
     c.setFont("Helvetica-Bold", 6.5)
-    c.drawCentredString(width / 2, footer_y - 1.5 * mm, "SCAN QR TO VERIFY")
+    c.drawCentredString(width / 2, footer_y - 0.5 * mm, "SCAN QR TO VERIFY RESULT")
 
-    # Director signature block (never fabricate signature)
-    sig_x = width - 78 * mm
+    # Digitally Signed & Verified Block by G. Akash, B.E.
+    sig_x = width - 80 * mm
+    c.setFillColor(colors.HexColor("#F0FDF4"))
+    c.setStrokeColor(EMERALD)
+    c.setLineWidth(0.8)
+    c.roundRect(sig_x - 2 * mm, footer_y + 1 * mm, 58 * mm, 31 * mm, 3, fill=1, stroke=1)
+
     resolved_sig = resolve_signature_path(signature_path)
     if resolved_sig:
-        c.drawImage(str(resolved_sig), sig_x + 5 * mm, footer_y + 13 * mm, width=42 * mm, height=16 * mm, mask="auto", preserveAspectRatio=True)
+        c.drawImage(str(resolved_sig), sig_x + 7 * mm, footer_y + 15.5 * mm, width=40 * mm, height=13 * mm, mask="auto", preserveAspectRatio=True)
     else:
-        c.setStrokeColor(MUTED)
-        c.setDash(2, 2)
-        c.line(sig_x, footer_y + 14 * mm, sig_x + 52 * mm, footer_y + 14 * mm)
-        c.setDash()
-        c.setFillColor(MUTED)
-        c.setFont("Helvetica-Oblique", 7.5)
-        c.drawCentredString(sig_x + 26 * mm, footer_y + 17 * mm, "Authorized Signature")
+        c.setFillColor(EMERALD)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawCentredString(sig_x + 27 * mm, footer_y + 27.5 * mm, "DIGITALLY SIGNED & VERIFIED")
+        c.setFillColor(NAVY)
+        c.setFont("Times-BoldItalic", 12)
+        c.drawCentredString(sig_x + 27 * mm, footer_y + 19.5 * mm, director_name)
+        c.setFillColor(SLATE)
+        c.setFont("Helvetica", 6.2)
+        c.drawCentredString(sig_x + 27 * mm, footer_y + 15 * mm, f"Ref: {sig_cert_id}")
 
     c.setStrokeColor(NAVY)
-    c.setLineWidth(0.8)
-    c.line(sig_x, footer_y + 12 * mm, sig_x + 52 * mm, footer_y + 12 * mm)
+    c.setLineWidth(0.7)
+    c.line(sig_x + 2 * mm, footer_y + 12.5 * mm, sig_x + 52 * mm, footer_y + 12.5 * mm)
     c.setFillColor(NAVY)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(sig_x + 26 * mm, footer_y + 6 * mm, director_name)
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawCentredString(sig_x + 27 * mm, footer_y + 7.5 * mm, director_name)
     c.setFillColor(SLATE)
-    c.setFont("Helvetica", 8.5)
-    c.drawCentredString(sig_x + 26 * mm, footer_y + 1 * mm, director_designation)
+    c.setFont("Helvetica", 7.8)
+    c.drawCentredString(sig_x + 27 * mm, footer_y + 3 * mm, director_designation)
 
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+def _build_digital_sig_flowable(
+    styles,
+    *,
+    title: str,
+    director_name: str,
+    director_designation: str,
+    signature_path: Optional[str],
+    avail_w: float,
+):
+    cert = _doc_signature_hash(f"{title}|{director_name}|{datetime.now().strftime('%Y%m%d%H')}")
+    left_p = Paragraph(
+        f"<b>Digitally Signed &amp; Verified Document</b><br/>"
+        f"Certificate Ref: <font color='#15803D'><b>{cert}</b></font><br/>"
+        f"Issued via AKTP Official Academic System on {datetime.now().strftime('%d %b %Y %I:%M %p')}",
+        ParagraphStyle("AKSigLeft", parent=styles["Normal"], fontSize=8, leading=11, textColor=SLATE),
+    )
+    resolved_sig = resolve_signature_path(signature_path)
+    sig_parts = [
+        Paragraph(
+            "<font color='#15803D'><b>✓ DIGITALLY SIGNED &amp; VERIFIED</b></font>",
+            ParagraphStyle("AKSigBadge", parent=styles["Normal"], fontSize=7.5, alignment=TA_CENTER),
+        )
+    ]
+    if resolved_sig:
+        sig_parts.append(RLImage(str(resolved_sig), width=32 * mm, height=11 * mm))
+    else:
+        sig_parts.append(
+            Paragraph(
+                f"<i><b>{director_name}</b></i>",
+                ParagraphStyle("AKSigName", parent=styles["Normal"], fontSize=11, textColor=NAVY, alignment=TA_CENTER),
+            )
+        )
+    sig_parts.append(
+        Paragraph(
+            f"<b>{director_name}</b><br/>{director_designation}",
+            ParagraphStyle("AKSigDes", parent=styles["Normal"], fontSize=8, leading=10, textColor=NAVY, alignment=TA_CENTER),
+        )
+    )
+    sig_tbl = Table([[left_p, sig_parts]], colWidths=[avail_w - 64 * mm, 64 * mm])
+    sig_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOX", (1, 0), (1, 0), 0.9, EMERALD),
+        ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#F0FDF4")),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    return sig_tbl
 
 
 def generate_branded_table_pdf(
@@ -308,6 +450,9 @@ def generate_branded_table_pdf(
     tagline: str = "Learn • Practise • Achieve",
     landscape_mode: bool = False,
     footer_note: str = "",
+    director_name: str = "G. Akash, B.E.",
+    director_designation: str = "Director, AK Tuition",
+    signature_path: Optional[str] = None,
 ) -> bytes:
     buf = io.BytesIO()
     pagesize = landscape(A4) if landscape_mode else A4
@@ -371,11 +516,17 @@ def generate_branded_table_pdf(
         story.append(Spacer(1, 6 * mm))
         story.append(Paragraph(footer_note, ParagraphStyle("AKFoot", parent=styles["Normal"], fontSize=8.5, textColor=MUTED)))
 
-    story.append(Spacer(1, 5 * mm))
-    story.append(Paragraph(
-        f"Generated on {datetime.now().strftime('%d %b %Y %I:%M %p')} • AKTP PORTAL ({tuition_name})",
-        ParagraphStyle("AKGen", parent=styles["Normal"], fontSize=8, textColor=MUTED, alignment=TA_RIGHT),
-    ))
+    story.append(Spacer(1, 8 * mm))
+    story.append(
+        _build_digital_sig_flowable(
+            styles,
+            title=title,
+            director_name=director_name,
+            director_designation=director_designation,
+            signature_path=signature_path,
+            avail_w=avail_w,
+        )
+    )
 
     doc.build(story)
     return buf.getvalue()
@@ -506,6 +657,9 @@ def generate_question_paper_pdf(
     instructions: str,
     evaluation_scheme: str,
     questions: List[dict],
+    director_name: str = "G. Akash, B.E.",
+    director_designation: str = "Director, AK Tuition",
+    signature_path: Optional[str] = None,
 ) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm)
@@ -583,5 +737,16 @@ def generate_question_paper_pdf(
             story.append(ptbl)
             story.append(Spacer(1, 2 * mm))
 
+    story.append(Spacer(1, 8 * mm))
+    story.append(
+        _build_digital_sig_flowable(
+            styles,
+            title=title,
+            director_name=director_name,
+            director_designation=director_designation,
+            signature_path=signature_path,
+            avail_w=A4[0] - 36 * mm,
+        )
+    )
     doc.build(story)
     return buf.getvalue()

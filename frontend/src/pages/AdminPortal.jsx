@@ -60,6 +60,7 @@ export default function AdminPortal() {
   const [exams, setExams] = useState([]);
   const [approvals, setApprovals] = useState([]);
   const [publishDispatches, setPublishDispatches] = useState([]);
+  const [groupSummary, setGroupSummary] = useState("");
   const [announcements, setAnnouncements] = useState([]);
   const [notifData, setNotifData] = useState({ mode: {}, notifications: [] });
   const [settings, setSettings] = useState(null);
@@ -302,10 +303,25 @@ export default function AdminPortal() {
         send_notifications: true,
       });
       setPublishDispatches(res.data.dispatches || []);
+      setGroupSummary("");
       notify(res.data.message);
       loadAll();
     } catch (err) {
       notify(err.response?.data?.detail || "Review failed.", "error");
+    }
+  };
+
+  const handlePublishAllPending = async () => {
+    try {
+      const res = await api.post("/api/admin/result-approvals/publish-all", {
+        send_notifications: true,
+      });
+      setPublishDispatches(res.data.dispatches || []);
+      setGroupSummary(res.data.group_summary || "");
+      notify(res.data.message);
+      loadAll();
+    } catch (err) {
+      notify(err.response?.data?.detail || "No pending results to publish.", "error");
     }
   };
 
@@ -1057,22 +1073,45 @@ export default function AdminPortal() {
         <div className="space-y-4">
           <div className="bg-amber-50 border border-gold-400 rounded-2xl p-4 text-sm text-navy-900 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <strong>Official Result Governance:</strong> Teacher-submitted marks remain <strong>PENDING</strong> and invisible to students/parents until reviewed and published by the Administrator.
+              <strong>Official Result Governance:</strong> Teacher-submitted marks remain <strong>PENDING</strong> until published by the Administrator. Use <strong>Publish All at Once</strong> to publish all pending marks and send consolidated PUC Marks Card messages directly to students/parents on WhatsApp.
             </div>
-            <button
-              onClick={() => handleDownloadReport("examination_results", "pdf")}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-navy-900 text-white text-xs font-bold shrink-0"
-            >
-              <Download className="w-4 h-4" /> Print Overall AK Tuition Marks PDF
-            </button>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              {pendingCount > 0 && (
+                <button
+                  onClick={handlePublishAllPending}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow"
+                >
+                  <Check className="w-4 h-4" /> Publish All ({pendingCount}) &amp; Send WhatsApp
+                </button>
+              )}
+              <button
+                onClick={() => handleDownloadReport("examination_results", "pdf")}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-navy-900 text-white text-xs font-bold"
+              >
+                <Download className="w-4 h-4" /> Print Overall Signed Marks PDF
+              </button>
+            </div>
           </div>
           {publishDispatches.length > 0 && (
             <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="font-bold text-emerald-900 text-sm">
                   Real-Time Result Alerts Dispatched / Ready ({publishDispatches.length})
                 </div>
-                <button onClick={() => setPublishDispatches([])} className="text-xs text-slate-500 hover:underline">Dismiss</button>
+                <div className="flex gap-2">
+                  {groupSummary && (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(`AK TUITION OFFICIAL RESULTS PUBLISHED\n${groupSummary}\nCheck Signed PUC Marks Card: https://aktp-portal.netlify.app/results`);
+                        notify("All results summary copied — ready to paste into WhatsApp Group!");
+                      }}
+                      className="px-3 py-1 rounded-lg bg-navy-900 text-white text-xs font-bold"
+                    >
+                      Copy All Results for WhatsApp Group
+                    </button>
+                  )}
+                  <button onClick={() => setPublishDispatches([])} className="text-xs text-slate-500 hover:underline">Dismiss</button>
+                </div>
               </div>
               <div className="space-y-1.5">
                 {publishDispatches.map((d, idx) => (

@@ -299,9 +299,61 @@ def run_verification():
         login(client, signup_creds["student_username"], signup_creds["student_password"], "student")
         client.delete(f"/api/admin/students/{signup_sid}?hard_delete=true", headers=auth_header(admin_auth["access_token"]))
 
-        # QR Verification endpoint for published marks card
+        # QR Verification endpoint + Public VTU Captcha + AI Assistant
         qr_ver = client.get(f"/api/public/verify-markscard?code={student_auth['user']['student_code']}&exam={exam_id}")
         assert qr_ver.status_code == 200 and qr_ver.json()["verified"] is True
+
+        cap = client.get("/api/public/result-captcha")
+        assert cap.status_code == 200 and "<svg" in cap.json()["svg"]
+        bad_lookup = client.post("/api/public/results/lookup", json={
+            "mode": "register_no",
+            "register_no": "AK001A",
+            "captcha_token": cap.json()["captcha_token"],
+            "captcha_answer": "ZZZZZ",
+        })
+        assert bad_lookup.status_code == 400
+
+        ai = client.post("/api/public/ai-assistant", json={"message": "How do I check my PUC marks card result?"})
+        assert ai.status_code == 200 and len(ai.json().get("reply", "")) > 10
+
+        # Submit draft/pending marks for another exam subject -> Admin Publish All at once
+        sci_subj = next(s for s in subjects_list if s["code"] == "SCI")
+        bulk_exam = client.post(
+            "/api/admin/examinations",
+            headers=auth_header(admin_auth["access_token"]),
+            json={
+                "name": "Bulk Publish Test Exam",
+                "class_id": class10["id"],
+                "exam_type": "UNIT_TEST",
+                "start_date": date.today().isoformat(),
+                "end_date": (date.today() + timedelta(days=1)).isoformat(),
+                "subjects": [{
+                    "subject_id": sci_subj["id"],
+                    "exam_date": date.today().isoformat(),
+                    "max_marks": 50,
+                    "passing_marks": 18,
+                }],
+            },
+        ).json()
+        bulk_ex_list = client.get("/api/teacher/examinations", headers=auth_header(teacher_auth["access_token"])).json()
+        bulk_ex_item = next(e for e in bulk_ex_list if e["id"] == bulk_exam["id"])
+        bulk_es = bulk_ex_item["subjects"][0]["examination_subject_id"]
+        client.post(
+            "/api/teacher/marks",
+            headers=auth_header(teacher_auth["access_token"]),
+            json={
+                "examination_id": bulk_exam["id"],
+                "examination_subject_id": bulk_es,
+                "submit_for_approval": True,
+                "entries": [{"student_id": student_auth["user"]["student_id"], "marks_obtained": 48}],
+            },
+        )
+        pub_all = client.post(
+            "/api/admin/result-approvals/publish-all",
+            headers=auth_header(admin_auth["access_token"]),
+            json={"examination_id": bulk_exam["id"], "send_notifications": True},
+        )
+        assert pub_all.status_code == 200 and pub_all.json()["approved_count"] >= 1 and len(pub_all.json()["dispatches"]) >= 1
 
         t_res_pdf = client.get("/api/teacher/results-pdf", headers=auth_header(teacher_auth["access_token"]))
         assert t_res_pdf.status_code == 200 and t_res_pdf.content.startswith(b"%PDF")

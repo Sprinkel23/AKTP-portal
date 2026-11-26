@@ -48,6 +48,7 @@ from app.schemas import (
     NotificationDispatchRequest,
     ParentConsentUpdate,
     PaymentCreate,
+    PublishAllResultsRequest,
     ResultApprovalAction,
     SettingsUpdate,
     StudentCreate,
@@ -1267,6 +1268,138 @@ def review_result_approval(
     raise HTTPException(status_code=400, detail="Action must be APPROVE or REJECT.")
 
 
+@router.post("/result-approvals/publish-all")
+def publish_all_pending_results(
+    payload: PublishAllResultsRequest,
+    request: Request,
+    current_user: User = Depends(require_roles(["admin"])),
+    db: Session = Depends(get_db),
+):
+    q = db.query(ResultApproval).filter(ResultApproval.status == "PENDING")
+    if payload.examination_id:
+        q = q.filter(ResultApproval.examination_id == payload.examination_id)
+    pending_aps = q.all()
+    if not pending_aps:
+        raise HTTPException(status_code=400, detail="No pending result submissions to publish.")
+
+    settings = get_or_create_settings(db)
+    touched_exam_students = set()
+    for ap in pending_aps:
+        ap.status = "PUBLISHED"
+        ap.approved_by_user_id = current_user.id
+        ap.approval_date = datetime.utcnow()
+        ap.rejection_reason = None
+        marks_rows = db.query(Mark).filter(Mark.examination_subject_id == ap.examination_subject_id).all()
+        for m in marks_rows:
+            m.status = "PUBLISHED"
+            touched_exam_students.add((ap.examination_id, m.student_id))
+
+    db.flush()
+    dispatches = []
+    group_lines = []
+    if payload.send_notifications:
+        from app.services.pdf_generator import puc_division
+
+        for ex_id, st_id in sorted(touched_exam_students):
+            st = db.query(Student).filter(Student.id == st_id).first()
+            ex = db.query(Examination).filter(Examination.id == ex_id).first()
+            if not st or not ex:
+                continue
+            pub_marks = (
+                db.query(Mark)
+                .filter(Mark.examination_id == ex_id, Mark.student_id == st_id, Mark.status == "PUBLISHED")
+                .order_by(Mark.id.asc())
+                .all()
+            )
+            if not pub_marks:
+                continue
+            tot_obt = sum(float(m.marks_obtained) for m in pub_marks)
+            tot_max = sum(float(m.max_marks) for m in pub_marks)
+            pct = round((tot_obt / tot_max) * 100, 2) if tot_max else 0.0
+            overall_grade, _ = compute_grade(pct, settings.grading_rules)
+            any_fail = any(float(m.marks_obtained) < round(float(m.max_marks) * 0.35) for m in pub_marks)
+            division = puc_division(pct, any_fail)
+            rank, class_tot = compute_class_rank(db, ex_id, st.class_id, st.id)
+            subj_text = ", ".join(
+                f"{m.subject.code if m.subject else 'SUB'}: {float(m.marks_obtained):g}/{float(m.max_marks):g}"
+                for m in pub_marks
+            )
+            card_link = f"https://aktp-portal.netlify.app/results?code={st.student_code}&exam={ex_id}"
+            msg = (
+                f"AK TUITION OFFICIAL RESULT PUBLISHED\n"
+                f"Exam: {ex.name}\n"
+                f"Student: {st.student_name} ({st.student_code})\n"
+                f"Marks: {subj_text}\n"
+                f"Total: {tot_obt:g}/{tot_max:g} ({pct}%) | Rank: #{rank}/{class_tot if class_tot else '-'} | {division} ({overall_grade})\n"
+                f"View/Download Signed PUC Marks Card (No Login Needed): {card_link}\n"
+                f"Digitally Verified by {settings.director_name}"
+            )
+            group_lines.append(
+                f"{st.student_code} - {st.student_name}: {tot_obt:g}/{tot_max:g} ({pct}%, {division}, Rank #{rank})"
+            )
+            seen = set()
+            targets = [("parent", st.parent_phone, st.parent.user_id if st.parent else None, st.parent_id)]
+            if st.student_phone:
+                targets.append(("student", st.student_phone, st.user_id, None))
+            for tgt, raw_phone, uid, pid in targets:
+                clean_p = (raw_phone or "").strip()
+                tail = "".join(c for c in clean_p if c.isdigit())[-10:]
+                if not clean_p or tail in seen:
+                    continue
+                seen.add(tail)
+                notif = send_notification(
+                    db,
+                    recipient_phone=clean_p,
+                    channel="WHATSAPP",
+                    notification_type="RESULT",
+                    message=msg,
+                    dedup_key=f"PUBALL_{ex_id}_{st.id}_{tail}_{datetime.utcnow().strftime('%Y%m%d%H')}",
+                    recipient_user_id=uid,
+                    student_id=st.id,
+                    parent_id=pid,
+                )
+                links = build_direct_links(clean_p, msg)
+                dispatches.append({
+                    "student_code": st.student_code,
+                    "student_name": st.student_name,
+                    "exam_name": ex.name,
+                    "target": tgt,
+                    "phone": clean_p,
+                    "status": notif.status,
+                    "message": msg,
+                    "whatsapp_url": links["whatsapp_url"],
+                    "sms_url": links["sms_url"],
+                })
+
+    log_audit(
+        db,
+        current_user.id,
+        "PUBLISH_ALL_RESULTS",
+        "result_approval",
+        str(payload.examination_id or "ALL"),
+        {"approved_count": len(pending_aps), "students_notified": len(touched_exam_students)},
+        request,
+    )
+    db.commit()
+    auto_sent = sum(1 for d in dispatches if d["status"] == "SENT")
+    return {
+        "status": "PUBLISHED",
+        "approved_count": len(pending_aps),
+        "students_count": len(touched_exam_students),
+        "auto_sent_count": auto_sent,
+        "message": (
+            f"Published all {len(pending_aps)} pending subject results for {len(touched_exam_students)} student(s)! "
+            + (
+                f"{auto_sent} sent automatically via WhatsApp API."
+                if auto_sent
+                else "Consolidated PUC marks messages & no-login card links ready to send via WhatsApp."
+            )
+        ),
+        "dispatches": dispatches,
+        "group_summary": "\n".join(group_lines),
+    }
+
+
 # ---------------- ANNOUNCEMENTS ----------------
 
 @router.get("/announcements")
@@ -1687,6 +1820,9 @@ def generate_report(
         tuition_name=settings.tuition_name,
         tagline=settings.tagline,
         landscape_mode=len(headers) > 6,
+        director_name=settings.director_name,
+        director_designation=settings.director_designation,
+        signature_path=settings.director_signature_path,
     )
     return Response(
         content=pdf_bytes,

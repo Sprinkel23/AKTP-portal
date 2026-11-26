@@ -8,6 +8,8 @@ import TeacherPortal from "./pages/TeacherPortal";
 import StudentPortal from "./pages/StudentPortal";
 import ParentPortal from "./pages/ParentPortal";
 import VerifyMarksPage from "./pages/VerifyMarksPage";
+import ResultPortalPage from "./pages/ResultPortalPage";
+import AIChatWidget from "./components/AIChatWidget";
 
 function ProtectedRoute({ allowedRole, children }) {
   const { user, loading } = useAuth();
@@ -35,6 +37,7 @@ export default function App() {
           <Route path="/" element={<PortalHomePage />} />
           <Route path="/website" element={<HomePage />} />
           <Route path="/verify" element={<VerifyMarksPage />} />
+          <Route path="/results" element={<ResultPortalPage />} />
           <Route path="/login" element={<PortalHomePage />} />
           <Route path="/login/:role" element={<PortalHomePage />} />
           <Route
@@ -71,6 +74,7 @@ export default function App() {
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <AIChatWidget />
       </BrowserRouter>
     </AuthProvider>
   );

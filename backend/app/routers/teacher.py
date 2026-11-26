@@ -395,6 +395,9 @@ def teacher_overall_results_pdf(
         tuition_name=settings.tuition_name,
         tagline=settings.tagline,
         landscape_mode=True,
+        director_name=settings.director_name,
+        director_designation=settings.director_designation,
+        signature_path=settings.director_signature_path,
     )
     return Response(
         content=pdf_bytes,
@@ -863,6 +866,9 @@ def download_question_paper_pdf(
         total_marks=float(qp.total_marks),
         instructions=qp.instructions or "",
         evaluation_scheme=qp.evaluation_scheme or "",
+        director_name=settings.director_name,
+        director_designation=settings.director_designation,
+        signature_path=settings.director_signature_path,
         questions=[
             {
                 "question_type": q.question_type,

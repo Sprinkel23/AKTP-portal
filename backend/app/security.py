@@ -66,6 +66,38 @@ def get_current_user(
     return user
 
 
+def create_signed_payload(data: dict, expire_minutes: int = 15) -> str:
+    now = datetime.now(timezone.utc)
+    body = {**data, "iat": now, "exp": now + timedelta(minutes=expire_minutes)}
+    return jwt.encode(body, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def decode_signed_payload(token: str) -> dict:
+    try:
+        return jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification token expired. Please refresh.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification token.")
+
+
+def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    if not credentials or not credentials.credentials:
+        return None
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        user = db.query(User).filter(User.id == int(user_id), User.is_active == True).first()
+        return user
+    except Exception:
+        return None
+
+
 def require_roles(allowed_roles: Iterable[str]):
     allowed = set(allowed_roles)
 

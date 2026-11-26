@@ -190,6 +190,30 @@ class ResultApprovalAction(BaseModel):
     send_notifications: bool = True
 
 
+class PublishAllResultsRequest(BaseModel):
+    examination_id: Optional[int] = None
+    send_notifications: bool = True
+
+
+class PublicResultLookupRequest(BaseModel):
+    mode: str = "register_no"  # register_no | otp
+    register_no: Optional[str] = None
+    phone: Optional[str] = None
+    otp_code: Optional[str] = None
+    examination_id: Optional[int] = None
+    captcha_token: str
+    captcha_answer: str
+
+
+class PublicResultOtpRequest(BaseModel):
+    phone: str = Field(..., min_length=8)
+
+
+class AiAssistantRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=1500)
+    history: List[dict] = []
+
+
 class QuestionOptionInput(BaseModel):
     option_label: str
     option_text: str

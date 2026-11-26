@@ -10,6 +10,7 @@ from app.config import (
     WHATSAPP_ACCESS_TOKEN,
     WHATSAPP_API_VERSION,
     WHATSAPP_PHONE_NUMBER_ID,
+    WHATSAPP_WEBHOOK_URL,
 )
 from app.models import Notification, Parent
 from app.services.helpers import get_or_create_settings
@@ -142,9 +143,30 @@ def send_notification(
                 status_val = "FAILED"
                 error_detail = f"WhatsApp Cloud request failed: {exc}"
         else:
-            status_val = "DISPATCH_READY"
-            provider_val = "DIRECT_WHATSAPP"
-            error_detail = None
+            webhook_url = WHATSAPP_WEBHOOK_URL.strip()
+            if webhook_url:
+                provider_val = "WHATSAPP_WEBHOOK"
+                try:
+                    clean_phone = format_wa_digits(recipient_phone)
+                    resp = httpx.post(
+                        webhook_url,
+                        json={"phone": clean_phone, "message": message, "type": notification_type},
+                        timeout=10.0,
+                    )
+                    if 200 <= resp.status_code < 300:
+                        status_val = "SENT"
+                        provider_msg_id = "webhook-ok"
+                        sent_at = datetime.utcnow()
+                    else:
+                        status_val = "FAILED"
+                        error_detail = f"Webhook HTTP {resp.status_code}"
+                except Exception as exc:
+                    status_val = "FAILED"
+                    error_detail = f"Webhook error: {exc}"
+            else:
+                status_val = "DISPATCH_READY"
+                provider_val = "DIRECT_WHATSAPP"
+                error_detail = None
 
     rec = Notification(
         recipient_user_id=recipient_user_id,
