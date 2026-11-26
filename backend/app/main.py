@@ -1,0 +1,51 @@
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from app.config import ASSETS_DIR, CORS_ORIGINS, UPLOADS_DIR
+from app.database import Base, SessionLocal, engine
+from app.routers import admin, auth, parent, public, student, teacher
+from app.seed import seed_database
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        seed_database(db)
+    finally:
+        db.close()
+    yield
+
+
+app = FastAPI(
+    title="AKTP PORTAL — AK Tuition Educational Management API",
+    version="1.0.0",
+    description="Centralized full-stack backend connecting Admin, Teacher, Student, and Parent portals.",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+
+app.include_router(public.router)
+app.include_router(auth.router)
+app.include_router(admin.router)
+app.include_router(teacher.router)
+app.include_router(student.router)
+app.include_router(parent.router)
+
+
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "service": "AKTP PORTAL API"}

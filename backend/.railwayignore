@@ -1,0 +1,10 @@
+.env
+.env.*
+.pgdata/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+uploads/
+tests/
+*.log

@@ -1,0 +1,10 @@
+.netlify/
+.pgdata/
+backend/.env
+backend/uploads/
+frontend/.env
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/
+*.pyc
+.DS_Store
