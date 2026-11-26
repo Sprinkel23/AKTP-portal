@@ -16,7 +16,7 @@ export default function AIChatWidget() {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      text: "Hello! I am AKTP AI Assistant. Ask me about exam results (/results), PUC Marks Cards, attendance, timetables, or study help.",
+      text: "Hello! I am AKTP AI Assistant. Ask me about exam results (/results), Statement of Marks cards, attendance, timetables, or study help.",
     },
   ]);
 

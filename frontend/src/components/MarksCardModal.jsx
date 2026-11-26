@@ -25,7 +25,7 @@ function marksInWords(val) {
   return dec > 0 ? `${intToWords(whole)} POINT ${ONES[dec]}` : intToWords(whole);
 }
 
-function getPucClassification(pct, anyFail) {
+function getResultDivision(pct, anyFail) {
   if (anyFail || pct < 35) return "FAIL";
   if (pct >= 85) return "DISTINCTION";
   if (pct >= 60) return "FIRST CLASS";
@@ -33,18 +33,18 @@ function getPucClassification(pct, anyFail) {
   return "PASS CLASS";
 }
 
-export function PucMarksCardSheet({ result }) {
+export function OfficialMarksCardSheet({ result }) {
   if (!result) return null;
   const anyFail = (result.subjects || []).some(
     (s) => Number(s.marks_obtained) < (s.min_marks || Math.round(Number(s.max_marks) * 0.35))
   );
-  const pucClass = getPucClassification(Number(result.percentage || 0), anyFail);
+  const resClass = getResultDivision(Number(result.percentage || 0), anyFail);
   const certId = result.certificate_id || `AKTP-DSIG-${result.student_code}-EX${result.examination_id}`;
 
   return (
     <div className="border-4 border-[#0A2463] p-1.5 rounded-sm bg-[#FFFDF7]">
       <div className="border-2 border-[#7C1D24] p-5 sm:p-8 bg-[#FFFDF7] relative overflow-hidden">
-        {/* Header (Karnataka PUC Board Pattern) */}
+        {/* Header (Official Board Statement of Marks Format) */}
         <div className="flex flex-col sm:flex-row items-center gap-4 pb-5 border-b-2 border-[#D4AF37]">
           <img
             src="/ak-tuition-logo.png"
@@ -53,7 +53,7 @@ export function PucMarksCardSheet({ result }) {
           />
           <div className="flex-1 text-center sm:text-left">
             <div className="text-[10px] font-bold uppercase tracking-widest text-[#7C1D24]">
-              Department of Academic Examinations • PUC Board Pattern
+              Department of Academic Examinations • Official Record
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-wide text-[#0A2463]">
               AK TUITION
@@ -95,7 +95,7 @@ export function PucMarksCardSheet({ result }) {
           </div>
         </div>
 
-        {/* PUC Subject Marks Table */}
+        {/* Subject Marks Table */}
         <div className="mt-6 overflow-x-auto">
           <table className="w-full border-collapse text-xs sm:text-sm">
             <thead>
@@ -154,9 +154,9 @@ export function PucMarksCardSheet({ result }) {
             <div className="text-[11px] text-slate-600">Grade: {result.overall_grade}</div>
           </div>
           <div>
-            <div className="text-xs text-slate-500 uppercase">PUC Result Classification</div>
-            <div className={`text-base sm:text-lg font-extrabold ${pucClass !== "FAIL" ? "text-emerald-700" : "text-red-700"}`}>
-              {pucClass}
+            <div className="text-xs text-slate-500 uppercase">Result Classification</div>
+            <div className={`text-base sm:text-lg font-extrabold ${resClass !== "FAIL" ? "text-emerald-700" : "text-red-700"}`}>
+              {resClass}
             </div>
             <div className="text-[11px] text-slate-600">{result.teacher_remarks}</div>
           </div>
@@ -174,7 +174,7 @@ export function PucMarksCardSheet({ result }) {
             </div>
             <div className="text-xs text-slate-500">
               <div>Issued via AKTP PORTAL</div>
-              <div>Karnataka Academic Pattern</div>
+              <div>Official Academic Record</div>
             </div>
           </div>
 
@@ -234,7 +234,7 @@ export default function MarksCardModal({ result, pdfUrl, publicPdfToken, onClose
     try {
       await downloadAuthorizedFile(
         pdfUrl,
-        `AK_PUC_MarksCard_${result.student_code}_Exam${result.examination_id}.pdf`
+        `AK_MarksCard_${result.student_code}_Exam${result.examination_id}.pdf`
       );
     } catch (e) {
       alert(e.response?.data?.detail || "Unable to download marks card PDF.");
@@ -249,7 +249,7 @@ export default function MarksCardModal({ result, pdfUrl, publicPdfToken, onClose
         <div className="no-print flex flex-wrap items-center justify-between gap-3 px-6 py-4 bg-[#0A2463] text-white border-b border-[#D4AF37]">
           <div className="flex items-center gap-2">
             <Award className="w-5 h-5 text-[#D4AF37]" />
-            <span className="font-semibold">AK Tuition — Official PUC Pattern Marks Card</span>
+            <span className="font-semibold">AK Tuition — Official Statement of Marks</span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -278,7 +278,7 @@ export default function MarksCardModal({ result, pdfUrl, publicPdfToken, onClose
           </div>
         </div>
         <div className="p-5 sm:p-8 bg-white">
-          <PucMarksCardSheet result={result} />
+          <OfficialMarksCardSheet result={result} />
         </div>
       </div>
     </div>

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { CheckCircle2, XCircle } from "lucide-react";
 import api from "../api/client";
-import { PucMarksCardSheet } from "../components/MarksCardModal";
+import { OfficialMarksCardSheet } from "../components/MarksCardModal";
 
 export default function VerifyMarksPage() {
   const [params] = useSearchParams();
@@ -74,7 +74,7 @@ export default function VerifyMarksPage() {
                 </div>
               </div>
             </div>
-            <PucMarksCardSheet result={data} />
+            <OfficialMarksCardSheet result={data} />
           </div>
         )}
       </main>

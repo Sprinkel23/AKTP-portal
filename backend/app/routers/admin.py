@@ -1297,14 +1297,17 @@ def publish_all_pending_results(
     db.flush()
     dispatches = []
     group_lines = []
+    declared_exams = {}
     if payload.send_notifications:
-        from app.services.pdf_generator import puc_division
+        from app.services.pdf_generator import result_division
 
         for ex_id, st_id in sorted(touched_exam_students):
             st = db.query(Student).filter(Student.id == st_id).first()
             ex = db.query(Examination).filter(Examination.id == ex_id).first()
             if not st or not ex:
                 continue
+            declared_exams[ex.id] = ex
+            ex.status = "RESULTS_DECLARED"
             pub_marks = (
                 db.query(Mark)
                 .filter(Mark.examination_id == ex_id, Mark.student_id == st_id, Mark.status == "PUBLISHED")
@@ -1318,7 +1321,7 @@ def publish_all_pending_results(
             pct = round((tot_obt / tot_max) * 100, 2) if tot_max else 0.0
             overall_grade, _ = compute_grade(pct, settings.grading_rules)
             any_fail = any(float(m.marks_obtained) < round(float(m.max_marks) * 0.35) for m in pub_marks)
-            division = puc_division(pct, any_fail)
+            division = result_division(pct, any_fail)
             rank, class_tot = compute_class_rank(db, ex_id, st.class_id, st.id)
             subj_text = ", ".join(
                 f"{m.subject.code if m.subject else 'SUB'}: {float(m.marks_obtained):g}/{float(m.max_marks):g}"
@@ -1326,16 +1329,16 @@ def publish_all_pending_results(
             )
             card_link = f"https://aktp-portal.netlify.app/results?code={st.student_code}&exam={ex_id}"
             msg = (
-                f"AK TUITION OFFICIAL RESULT PUBLISHED\n"
+                f"AK TUITION - RESULT ALERT\n"
                 f"Exam: {ex.name}\n"
-                f"Student: {st.student_name} ({st.student_code})\n"
+                f"Student: {st.student_name} ({st.student_code}{st.section or ''})\n"
                 f"Marks: {subj_text}\n"
                 f"Total: {tot_obt:g}/{tot_max:g} ({pct}%) | Rank: #{rank}/{class_tot if class_tot else '-'} | {division} ({overall_grade})\n"
-                f"View/Download Signed PUC Marks Card (No Login Needed): {card_link}\n"
-                f"Digitally Verified by {settings.director_name}"
+                f"Marks Card: {card_link}\n"
+                f"- Digitally Signed by {settings.director_name}"
             )
             group_lines.append(
-                f"{st.student_code} - {st.student_name}: {tot_obt:g}/{tot_max:g} ({pct}%, {division}, Rank #{rank})"
+                f"{st.student_code}{st.section or ''} - {st.student_name}: {tot_obt:g}/{tot_max:g} ({pct}%, {division}, Rank #{rank})"
             )
             seen = set()
             targets = [("parent", st.parent_phone, st.parent.user_id if st.parent else None, st.parent_id)]
@@ -1371,6 +1374,22 @@ def publish_all_pending_results(
                     "sms_url": links["sms_url"],
                 })
 
+    # Automatically publish official Result Announcement on Portal Notice Board
+    for ex_id, ex_obj in declared_exams.items():
+        ann_title = f"Official Results Declared — {ex_obj.name}"
+        existing_ann = db.query(Announcement).filter(Announcement.title == ann_title).first()
+        if not existing_ann:
+            db.add(Announcement(
+                title=ann_title,
+                category="RESULT",
+                content=f"Official marks for {ex_obj.name} ({ex_obj.school_class.name if ex_obj.school_class else ''}) have been declared and digitally verified by {settings.director_name}. Check & download your Statement of Marks at https://aktp-portal.netlify.app/results",
+                event_date=date.today(),
+                target_audience="PUBLIC",
+                is_published=True,
+                is_featured=True,
+                created_by_user_id=current_user.id,
+            ))
+
     log_audit(
         db,
         current_user.id,
@@ -1387,12 +1406,13 @@ def publish_all_pending_results(
         "approved_count": len(pending_aps),
         "students_count": len(touched_exam_students),
         "auto_sent_count": auto_sent,
+        "share_url": "https://aktp-portal.netlify.app/results",
         "message": (
-            f"Published all {len(pending_aps)} pending subject results for {len(touched_exam_students)} student(s)! "
+            f"Declared & published all {len(pending_aps)} pending subject results for {len(touched_exam_students)} student(s)! "
             + (
-                f"{auto_sent} sent automatically via WhatsApp API."
+                f"{auto_sent} sent automatically to WhatsApp."
                 if auto_sent
-                else "Consolidated PUC marks messages & no-login card links ready to send via WhatsApp."
+                else "Results announced on portal (/results) and SMS-formatted WhatsApp alerts ready."
             )
         ),
         "dispatches": dispatches,

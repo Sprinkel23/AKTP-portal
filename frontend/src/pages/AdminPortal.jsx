@@ -1073,15 +1073,24 @@ export default function AdminPortal() {
         <div className="space-y-4">
           <div className="bg-amber-50 border border-gold-400 rounded-2xl p-4 text-sm text-navy-900 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <strong>Official Result Governance:</strong> Teacher-submitted marks remain <strong>PENDING</strong> until published by the Administrator. Use <strong>Publish All at Once</strong> to publish all pending marks and send consolidated PUC Marks Card messages directly to students/parents on WhatsApp.
+              <strong>Official Result Declaration:</strong> Teacher-submitted marks remain <strong>PENDING</strong> until declared by the Administrator. Click <strong>Publish All &amp; Announce Results</strong> to unlock all student results on the shareable <span className="font-mono font-semibold">/results</span> link, auto-post the Result Announcement, and dispatch SMS-formatted WhatsApp messages.
             </div>
             <div className="flex flex-wrap gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText("https://aktp-portal.netlify.app/results");
+                  notify("Shareable Result Portal link copied: https://aktp-portal.netlify.app/results");
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-navy-900 bg-white text-navy-900 text-xs font-bold"
+              >
+                <Copy className="w-4 h-4" /> Copy Shareable Result Link
+              </button>
               {pendingCount > 0 && (
                 <button
                   onClick={handlePublishAllPending}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow"
                 >
-                  <Check className="w-4 h-4" /> Publish All ({pendingCount}) &amp; Send WhatsApp
+                  <Check className="w-4 h-4" /> Publish All ({pendingCount}) &amp; Announce Results
                 </button>
               )}
               <button
@@ -1096,13 +1105,13 @@ export default function AdminPortal() {
             <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="font-bold text-emerald-900 text-sm">
-                  Real-Time Result Alerts Dispatched / Ready ({publishDispatches.length})
+                  SMS-Formatted Result Alerts Ready / Dispatched ({publishDispatches.length})
                 </div>
                 <div className="flex gap-2">
                   {groupSummary && (
                     <button
                       onClick={() => {
-                        navigator.clipboard?.writeText(`AK TUITION OFFICIAL RESULTS PUBLISHED\n${groupSummary}\nCheck Signed PUC Marks Card: https://aktp-portal.netlify.app/results`);
+                        navigator.clipboard?.writeText(`AK TUITION OFFICIAL RESULTS DECLARED\n${groupSummary}\nCheck & Download Signed Marks Card: https://aktp-portal.netlify.app/results`);
                         notify("All results summary copied — ready to paste into WhatsApp Group!");
                       }}
                       className="px-3 py-1 rounded-lg bg-navy-900 text-white text-xs font-bold"

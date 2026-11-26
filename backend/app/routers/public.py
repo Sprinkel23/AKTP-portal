@@ -19,7 +19,7 @@ from app.schemas import (
 from app.security import create_signed_payload, decode_signed_payload, get_optional_user, log_audit
 from app.services.helpers import compute_class_rank, compute_grade, get_or_create_settings
 from app.services.notifications import build_direct_links, send_notification
-from app.services.pdf_generator import generate_marks_card_pdf, number_to_words, puc_division
+from app.services.pdf_generator import generate_marks_card_pdf, number_to_words, result_division
 
 router = APIRouter(prefix="/api/public", tags=["Public"])
 
@@ -177,7 +177,7 @@ def verify_markscard(code: str, exam: Optional[int] = None, db: Session = Depend
         "total_obtained": total_obt,
         "percentage": pct,
         "overall_grade": grade,
-        "result_status": puc_division(pct, any(float(m.marks_obtained) < round(float(m.max_marks) * 0.35) for m in marks)),
+        "result_status": result_division(pct, any(float(m.marks_obtained) < round(float(m.max_marks) * 0.35) for m in marks)),
         "class_rank": rank,
         "class_total_students": class_tot,
         "teacher_remarks": remark,
@@ -294,7 +294,7 @@ def request_public_result_otp(payload: PublicResultOtpRequest, request: Request,
     return resp
 
 
-def _format_puc_result_payload(db: Session, st: Student, target_exam_id: int) -> dict:
+def _format_official_result_payload(db: Session, st: Student, target_exam_id: int) -> dict:
     ex = db.query(Examination).filter(Examination.id == target_exam_id).first()
     marks = (
         db.query(Mark)
@@ -310,7 +310,7 @@ def _format_puc_result_payload(db: Session, st: Student, target_exam_id: int) ->
     pct = round((total_obt / total_max) * 100, 2) if total_max else 0.0
     grade, remark = compute_grade(pct, settings.grading_rules)
     any_fail = any(float(m.marks_obtained) < round(float(m.max_marks) * 0.35) for m in marks)
-    puc_res = puc_division(pct, any_fail)
+    div_res = result_division(pct, any_fail)
     rank, class_tot = compute_class_rank(db, ex.id, st.class_id, st.id)
     dl_token = create_signed_payload({"sid": st.id, "exid": ex.id}, expire_minutes=30)
     return {
@@ -328,7 +328,7 @@ def _format_puc_result_payload(db: Session, st: Student, target_exam_id: int) ->
         "total_in_words": number_to_words(total_obt),
         "percentage": pct,
         "overall_grade": grade,
-        "result_status": puc_res,
+        "result_status": div_res,
         "teacher_remarks": remark,
         "class_rank": rank,
         "class_total_students": class_tot,
@@ -349,6 +349,46 @@ def _format_puc_result_payload(db: Session, st: Student, target_exam_id: int) ->
                 "remarks": m.remarks or "-",
             }
             for m in marks
+        ],
+    }
+
+
+@router.get("/results/announcements")
+def get_announced_results_status(db: Session = Depends(get_db)):
+    published_exam_ids = {m[0] for m in db.query(Mark.examination_id).filter(Mark.status == "PUBLISHED").distinct().all()}
+    exams = (
+        db.query(Examination)
+        .filter(Examination.id.in_(published_exam_ids))
+        .order_by(Examination.start_date.desc())
+        .all()
+        if published_exam_ids
+        else []
+    )
+    result_notices = (
+        db.query(Announcement)
+        .filter(Announcement.is_published == True, Announcement.category == "RESULT")
+        .order_by(Announcement.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    return {
+        "declared_exams": [
+            {
+                "id": ex.id,
+                "name": ex.name,
+                "class_name": f"{ex.school_class.name} ({ex.school_class.section})" if ex.school_class else "",
+                "exam_date": f"{ex.start_date.strftime('%d %b %Y')}",
+            }
+            for ex in exams
+        ],
+        "announcements": [
+            {
+                "id": a.id,
+                "title": a.title,
+                "content": a.content,
+                "created_at": a.created_at.isoformat(),
+            }
+            for a in result_notices
         ],
     }
 
@@ -414,7 +454,7 @@ def public_result_lookup(payload: PublicResultLookupRequest, db: Session = Depen
 
     return {
         "available_examinations": available_exams,
-        "result": _format_puc_result_payload(db, st, target_ex_id),
+        "result": _format_official_result_payload(db, st, target_ex_id),
     }
 
 
@@ -472,7 +512,7 @@ def download_public_marks_card_pdf(token: str = Query(...), db: Session = Depend
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="AK_PUC_MarksCard_{st.student_code}_Exam{ex.id}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="AK_MarksCard_{st.student_code}_Exam{ex.id}.pdf"'},
     )
 
 
@@ -549,8 +589,8 @@ def ak_ai_assistant(
             pass
 
     # Deterministic grounded fallback assistant (zero external key required)
-    if any(w in q_lower for w in ["result", "mark", "marks card", "puc", "rank", "download", "score"]):
-        base = "You can view & download your Karnataka PUC-style digitally signed Marks Card anytime at **/results** (enter your Register No. like `AK001` or `AK001A` + Captcha, OR verify via Registered Mobile OTP + Captcha)."
+    if any(w in q_lower for w in ["result", "mark", "marks card", "rank", "download", "score"]):
+        base = "You can view & download your digitally signed AK Tuition Statement of Marks anytime at **/results** (enter your Register No. like `AK001` or `AK001A` + Captcha, OR verify via Registered Mobile OTP + Captcha)."
         if user_summary:
             base = f"Here is your live academic summary:\n{user_summary}\n\n{base}"
         return {"reply": base, "mode": "AKTP_GROUNDED"}
@@ -585,7 +625,7 @@ def ak_ai_assistant(
         "reply": (
             f"Hello! I'm the **AKTP AI Academic Assistant** for {settings.tuition_name}.\n"
             "Ask me about:\n"
-            "• Checking/downloading your **PUC Marks Card** (`/results`)\n"
+            "• Checking/downloading your **Official Marks Card** (`/results`)\n"
             "• Your **attendance %, absent dates, or class rank**\n"
             "• **Upcoming exam timetables** & **student sign-up / OTP help**\n"
             f"• Contacting Director **{settings.director_name}** (`{settings.phone}`)"

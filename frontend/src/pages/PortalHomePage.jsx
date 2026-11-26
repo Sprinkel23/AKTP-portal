@@ -139,43 +139,41 @@ export default function PortalHomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#eef2f7] flex flex-col">
-      {/* VTU-Style Institutional Top Strip */}
-      <div className="bg-[#7C1D24] text-amber-100 text-[11px] font-bold tracking-wider py-1.5 px-4 text-center">
-        KARNATAKA ACADEMIC EXAMINATION SYSTEM • AK TUITION OFFICIAL PORTAL • DIRECTOR: G. AKASH, B.E.
-      </div>
-
-      {/* Top Dark Navy Masthead */}
-      <header className="bg-[#0A2463] text-white shadow-md border-b-4 border-[#D4AF37]">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
+    <div className="min-h-screen bg-[#f4f7fb] flex flex-col">
+      {/* JAMS-Inspired Clean Institutional Masthead */}
+      <header className="bg-white border-b-4 border-[#0A2463] shadow-sm">
+        <div className="bg-[#0A2463] text-white text-[11px] font-semibold py-1.5 px-4">
+          <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2">
+            <span>AK TUITION (AKTP) • OFFICIAL ACADEMIC &amp; EXAMINATION PORTAL</span>
+            <span className="text-[#D4AF37]">Director: G. Akash, B.E.</span>
+          </div>
+        </div>
+        <div className="max-w-6xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
             <img
               src="/ak-tuition-logo.png"
               alt="AK Tuition Logo"
-              className="w-12 h-12 sm:w-16 sm:h-16 object-contain shrink-0"
+              className="w-12 h-12 sm:w-14 sm:h-14 object-contain shrink-0"
             />
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-[#D4AF37]">
-                Learn • Practise • Achieve
-              </div>
-              <h1 className="font-display font-extrabold text-xl sm:text-2xl tracking-wide leading-tight">
-                AK TUITION — ACADEMIC &amp; EXAMINATION PORTAL
+              <h1 className="font-display font-extrabold text-xl sm:text-2xl text-[#0A2463] tracking-wide leading-tight">
+                AK TUITION — AKTP PORTAL
               </h1>
-              <p className="text-[11px] sm:text-xs tracking-wider uppercase text-blue-200 font-medium">
-                Digitally Verified Results, Marks Cards &amp; Unified Portal
+              <p className="text-[11px] sm:text-xs tracking-wider uppercase text-slate-600 font-semibold">
+                Learn • Practise • Achieve | Student, Parent, Teacher &amp; Admin System
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2.5">
             <Link
               to="/results"
-              className="px-4 py-2 rounded-lg bg-[#D4AF37] hover:bg-amber-400 text-[#0A2463] text-xs font-extrabold uppercase tracking-wide shadow transition"
+              className="px-4 py-2 rounded-lg bg-[#0A2463] hover:bg-[#1E40AF] text-white text-xs font-extrabold tracking-wide shadow transition"
             >
               Exam Results (Captcha)
             </Link>
             <Link
               to="/website"
-              className="px-3.5 py-2 rounded-lg border border-white/30 hover:bg-white/10 text-xs font-semibold text-white transition"
+              className="px-3.5 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-[#0A2463] transition"
             >
               About Tuition
             </Link>
@@ -183,15 +181,15 @@ export default function PortalHomePage() {
         </div>
       </header>
 
-      {/* Official Notification Strip */}
+      {/* Official Result Announcement Bar */}
       <div className="bg-amber-50 border-b border-amber-200 py-2 px-4">
         <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 text-[#7C1D24] font-semibold">
-            <span className="px-2 py-0.5 rounded bg-[#7C1D24] text-white text-[10px] font-extrabold uppercase">NEW</span>
-            <span>Provisional PUC Pattern Results Published! Check Marks Card via AK Register No. (e.g. AK001A) or Mobile OTP + Captcha.</span>
+            <span className="px-2 py-0.5 rounded bg-[#7C1D24] text-white text-[10px] font-extrabold uppercase">NOTICE</span>
+            <span>Check Declared Examination Results via AK Register No. (e.g. AK001A) or Mobile OTP + Captcha.</span>
           </div>
           <Link to="/results" className="font-extrabold text-[#0A2463] underline hover:text-[#7C1D24] shrink-0">
-            Open Results Portal →
+            Open Shareable Results Link →
           </Link>
         </div>
       </div>
@@ -199,21 +197,21 @@ export default function PortalHomePage() {
       {/* Main Centered Container */}
       <main className="flex-1 flex flex-col items-center justify-start pt-6 sm:pt-8 pb-12 px-4">
         <div className="w-full max-w-4xl">
-          {/* Quick VTU-Style Results Highlight Box */}
-          <div className="mb-5 bg-white rounded-xl border-l-4 border-[#7C1D24] shadow-sm p-4 flex flex-wrap items-center justify-between gap-3">
+          {/* Direct Shareable Result Card */}
+          <div className="mb-5 bg-white rounded-xl border border-slate-200 border-l-4 border-l-[#0A2463] shadow-sm p-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#7C1D24]">
-                Official Examination Results Portal
+              <div className="text-xs font-bold uppercase tracking-wider text-[#1E40AF]">
+                Shareable Results Portal
               </div>
               <div className="text-sm font-bold text-[#0A2463]">
-                View &amp; Download Digitally Signed PUC Marks Cards Without Login
+                View &amp; Download Digitally Signed Statement of Marks Without Full Login
               </div>
             </div>
             <Link
               to="/results"
               className="px-4 py-2 rounded-lg bg-[#0A2463] hover:bg-[#1E40AF] text-white text-xs font-bold shadow transition"
             >
-              Check Result with USN / OTP + Captcha →
+              Check Result with AK ID / OTP + Captcha →
             </Link>
           </div>
 
@@ -243,8 +241,8 @@ export default function PortalHomePage() {
             })}
           </div>
 
-          {/* White VTU-Style Login Card */}
-          <div className="bg-white rounded-xl shadow-md border border-slate-200 border-t-4 border-t-[#0A2463] p-6 sm:p-9">
+          {/* JAMS-Style Login Card */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 border-t-4 border-t-[#0A2463] p-6 sm:p-9">
             {error && (
               <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
                 {error}

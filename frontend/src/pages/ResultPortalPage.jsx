@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { RefreshCw, Download, Printer, FileCheck2, ArrowLeft } from "lucide-react";
+import { RefreshCw, Download, Printer, FileCheck2, ArrowLeft, Share2, Megaphone } from "lucide-react";
 import api, { API_BASE_URL } from "../api/client";
-import { PucMarksCardSheet } from "../components/MarksCardModal";
+import { OfficialMarksCardSheet } from "../components/MarksCardModal";
 
 export default function ResultPortalPage() {
   const [params] = useSearchParams();
@@ -16,6 +16,7 @@ export default function ResultPortalPage() {
   const [captchaSvg, setCaptchaSvg] = useState("");
   const [captchaAnswer, setCaptchaAnswer] = useState("");
 
+  const [declaredInfo, setDeclaredInfo] = useState({ declared_exams: [], announcements: [] });
   const [availableExams, setAvailableExams] = useState([]);
   const [selectedExamId, setSelectedExamId] = useState(params.get("exam") || "");
   const [result, setResult] = useState(null);
@@ -36,6 +37,10 @@ export default function ResultPortalPage() {
 
   useEffect(() => {
     loadCaptcha();
+    api
+      .get("/api/public/results/announcements")
+      .then((res) => setDeclaredInfo(res.data || { declared_exams: [], announcements: [] }))
+      .catch(() => {});
   }, []);
 
   const handleLookup = async (e, overrideExamId = null) => {
@@ -77,46 +82,93 @@ export default function ResultPortalPage() {
     }
   };
 
+  const shareUrl = window.location.origin + "/results" + (registerNo ? `?code=${encodeURIComponent(registerNo)}` : "");
+
   return (
-    <div className="min-h-screen bg-[#f1f4f9] flex flex-col">
-      {/* Official VTU-Style Top Header */}
-      <div className="bg-[#7C1D24] text-amber-100 text-[11px] font-semibold py-1.5 px-4 text-center tracking-wide no-print">
-        AK TUITION ACADEMIC EXAMINATION SYSTEM • KARNATAKA PUC BOARD MARKS CARD PORTAL • DIRECTOR: G. AKASH, B.E.
-      </div>
-      <header className="bg-[#0A2463] text-white shadow-md border-b-4 border-[#D4AF37] no-print">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
+    <div className="min-h-screen bg-[#f4f7fb] flex flex-col">
+      {/* JAMS-Inspired Clean Institutional Header */}
+      <header className="bg-white border-b-4 border-[#0A2463] shadow-sm no-print">
+        <div className="bg-[#0A2463] text-white text-[11px] font-semibold py-1.5 px-4">
+          <div className="max-w-5xl mx-auto flex flex-wrap justify-between items-center gap-2">
+            <span>AK TUITION — ACADEMIC &amp; EXAMINATION MANAGEMENT PORTAL</span>
+            <span className="text-[#D4AF37]">Director: G. Akash, B.E.</span>
+          </div>
+        </div>
+        <div className="max-w-5xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
-            <img src="/ak-tuition-logo.png" alt="AK Tuition Logo" className="w-14 h-14 object-contain shrink-0" />
+            <img src="/ak-tuition-logo.png" alt="AK Tuition Logo" className="w-12 h-12 sm:w-14 sm:h-14 object-contain shrink-0" />
             <div>
-              <h1 className="font-display font-extrabold text-xl sm:text-2xl tracking-wide">
-                AK TUITION — PROVISIONAL RESULTS PORTAL
+              <h1 className="font-display font-extrabold text-lg sm:text-2xl text-[#0A2463] tracking-wide">
+                AK TUITION — EXAMINATION RESULTS PORTAL
               </h1>
-              <p className="text-xs text-blue-200 uppercase tracking-wider">
-                Check Published Marks Cards via Register No. (e.g. AK001A) or Registered Mobile OTP + CAPTCHA
+              <p className="text-xs text-slate-600 font-medium">
+                Enter Student Register No. (e.g. AK001A) or Registered Mobile OTP + CAPTCHA
               </p>
             </div>
           </div>
-          <Link
-            to="/"
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold text-[#D4AF37] border border-[#D4AF37]/50"
-          >
-            <ArrowLeft className="w-4 h-4" /> Portal Login Home
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard?.writeText(shareUrl);
+                setInfoMsg(`Shareable Result Portal link copied: ${shareUrl}`);
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-[#0A2463] text-[#0A2463] hover:bg-blue-50 text-xs font-bold"
+            >
+              <Share2 className="w-3.5 h-3.5" /> Copy Shareable Link
+            </button>
+            <Link
+              to="/"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0A2463] hover:bg-[#1E40AF] text-xs font-bold text-white"
+            >
+              <ArrowLeft className="w-4 h-4" /> Portal Login
+            </Link>
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-8 space-y-6">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-7 space-y-6">
+        {/* Official Declared Results Notice Board */}
+        <div className="no-print bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-2">
+          <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-[#0A2463]">
+            <Megaphone className="w-4 h-4 text-[#7C1D24]" />
+            <span>Result Declaration Notice Board</span>
+          </div>
+          {declaredInfo.declared_exams?.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {declaredInfo.declared_exams.map((ex) => (
+                <button
+                  key={ex.id}
+                  type="button"
+                  onClick={() => setSelectedExamId(String(ex.id))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                    String(selectedExamId) === String(ex.id)
+                      ? "bg-[#0A2463] text-white border-[#0A2463]"
+                      : "bg-emerald-50 text-emerald-900 border-emerald-200 hover:bg-emerald-100"
+                  }`}
+                >
+                  DECLARED: {ex.name} ({ex.class_name})
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600">
+              Examination results will appear automatically once declared by the Administrator.
+            </p>
+          )}
+        </div>
+
         {/* Lookup Card */}
-        <div className="no-print bg-white rounded-xl shadow-md border-t-4 border-[#0A2463] p-6 sm:p-8 space-y-5">
+        <div className="no-print bg-white rounded-xl shadow-sm border border-slate-200 border-t-4 border-t-[#0A2463] p-6 sm:p-8 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
             <div className="flex items-center gap-2.5">
-              <FileCheck2 className="w-6 h-6 text-[#7C1D24]" />
+              <FileCheck2 className="w-6 h-6 text-[#0A2463]" />
               <div>
                 <h2 className="text-lg sm:text-xl font-bold text-[#0A2463]">
-                  Examination Result Lookup (No Full Login Required)
+                  Student Result Lookup
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Instant access to digitally signed &amp; QR-verified PUC pattern Marks Cards.
+                  View and download digitally signed Statement of Marks without logging in.
                 </p>
               </div>
             </div>
@@ -145,7 +197,7 @@ export default function ResultPortalPage() {
             {mode === "register_no" ? (
               <div className="sm:col-span-5">
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase">
-                  Enter Register No. / AK ID *
+                  Register No. / AK ID *
                 </label>
                 <input
                   required
@@ -172,7 +224,7 @@ export default function ResultPortalPage() {
                     <button
                       type="button"
                       onClick={handleSendOtp}
-                      className="px-3 py-2 rounded-lg bg-[#7C1D24] text-white text-xs font-bold shrink-0"
+                      className="px-3 py-2 rounded-lg bg-[#0A2463] text-white text-xs font-bold shrink-0"
                     >
                       {otpSent ? "Resend" : "OTP"}
                     </button>
@@ -233,7 +285,7 @@ export default function ResultPortalPage() {
           </form>
         </div>
 
-        {/* Displayed PUC Marks Card */}
+        {/* Displayed Statement of Marks */}
         {result && (
           <div className="bg-white rounded-xl shadow-lg border p-5 sm:p-8 space-y-4">
             <div className="no-print flex flex-wrap items-center justify-between gap-3 border-b pb-4">
@@ -242,9 +294,7 @@ export default function ResultPortalPage() {
                   <span className="font-bold text-[#0A2463]">Examination:</span>
                   <select
                     value={selectedExamId}
-                    onChange={(e) => {
-                      setSelectedExamId(e.target.value);
-                    }}
+                    onChange={(e) => setSelectedExamId(e.target.value)}
                     className="rounded-lg border px-3 py-1.5 font-semibold"
                   >
                     {availableExams.map((ex) => (
@@ -254,7 +304,7 @@ export default function ResultPortalPage() {
                 </div>
               ) : (
                 <div className="text-sm font-bold text-emerald-800">
-                  Official Result Ready — Signed &amp; Verified by {result.director_name}
+                  Official Statement of Marks — Digitally Signed by {result.director_name}
                 </div>
               )}
 
@@ -272,12 +322,12 @@ export default function ResultPortalPage() {
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0A2463] text-white text-xs font-bold shadow"
                 >
-                  <Download className="w-4 h-4 text-[#D4AF37]" /> Download Signed PUC PDF
+                  <Download className="w-4 h-4 text-[#D4AF37]" /> Download Signed Marks PDF
                 </a>
               </div>
             </div>
 
-            <PucMarksCardSheet result={result} />
+            <OfficialMarksCardSheet result={result} />
           </div>
         )}
       </main>

@@ -64,7 +64,7 @@ def number_to_words(val: float) -> str:
     return text
 
 
-def puc_division(percentage: float, any_fail: bool = False) -> str:
+def result_division(percentage: float, any_fail: bool = False) -> str:
     if any_fail or percentage < 35:
         return "FAIL"
     if percentage >= 85:
@@ -152,7 +152,7 @@ def generate_marks_card_pdf(
     width, height = A4
     c = canvas.Canvas(buf, pagesize=A4)
 
-    # Cream Karnataka PUC parchment sheet
+    # Parchment sheet background
     c.setFillColor(CREAM)
     c.rect(0, 0, width, height, fill=1, stroke=0)
 
@@ -171,7 +171,7 @@ def generate_marks_card_pdf(
             c.setFillColor(GOLD)
             c.rect(x0, y0, 5 * mm, 5 * mm, fill=1, stroke=0)
 
-    # Subtle diagonal PUC-style security watermark
+    # Subtle diagonal institutional security watermark
     c.saveState()
     c.translate(width / 2, height / 2)
     c.rotate(34)
@@ -182,7 +182,7 @@ def generate_marks_card_pdf(
     c.drawCentredString(0, -16, "OFFICIAL STATEMENT OF MARKS")
     c.restoreState()
 
-    # Header band (PUC Board Pattern)
+    # Header band
     top_y = height - 22 * mm
     resolved_logo = resolve_logo_path(logo_path)
     if resolved_logo:
@@ -190,7 +190,7 @@ def generate_marks_card_pdf(
 
     c.setFillColor(MAROON)
     c.setFont("Helvetica-Bold", 8.5)
-    c.drawCentredString(width / 2 + 8 * mm, top_y - 1 * mm, "DEPARTMENT OF ACADEMIC EXAMINATIONS • PUC BOARD PATTERN")
+    c.drawCentredString(width / 2 + 8 * mm, top_y - 1 * mm, "DEPARTMENT OF ACADEMIC EXAMINATIONS • OFFICIAL RECORD")
 
     c.setFillColor(NAVY)
     c.setFont("Helvetica-Bold", 21)
@@ -217,7 +217,7 @@ def generate_marks_card_pdf(
     c.setLineWidth(1.2)
     c.line(20 * mm, top_y - 35 * mm, width - 20 * mm, top_y - 35 * mm)
 
-    # Candidate Details Box (Karnataka PUC style)
+    # Candidate Details Box
     box_top = top_y - 39 * mm
     c.setFillColor(colors.white)
     c.setStrokeColor(NAVY)
@@ -230,8 +230,8 @@ def generate_marks_card_pdf(
     c.drawString(24 * mm, box_top - 15 * mm, "Register No. (AK ID):")
     c.drawString(24 * mm, box_top - 22.5 * mm, "Exam Date:")
 
-    c.drawString(114 * mm, box_top - 7.5 * mm, "Class / Stream:")
-    c.drawString(114 * mm, box_top - 15 * mm, "Section / Batch:")
+    c.drawString(114 * mm, box_top - 7.5 * mm, "Class / Batch:")
+    c.drawString(114 * mm, box_top - 15 * mm, "Section:")
     c.drawString(114 * mm, box_top - 22.5 * mm, "Verification:")
 
     c.setFillColor(colors.black)
@@ -248,7 +248,7 @@ def generate_marks_card_pdf(
     c.setFont("Helvetica-Bold", 9)
     c.drawString(144 * mm, box_top - 22.5 * mm, "DIGITALLY VERIFIED")
 
-    # Authentic Karnataka PUC Subject Marks Table (with Min Marks, Marks in Words, Subject Result)
+    # Subject Marks Table (with Min Marks, Marks in Words, Subject Result)
     table_data = [["Sl.", "Subject", "Max", "Min", "Obtained", "Marks in Words", "Result", "Grade"]]
     any_fail = False
     for idx, row in enumerate(subjects, start=1):
@@ -298,8 +298,8 @@ def generate_marks_card_pdf(
     tw, th = tbl.wrapOn(c, width - 40 * mm, 135 * mm)
     tbl.drawOn(c, 20 * mm, table_y - th)
 
-    # Grand Total & Classification Summary Box (PUC Board Style)
-    puc_class = puc_division(percentage, any_fail)
+    # Grand Total & Classification Summary Box
+    res_class = result_division(percentage, any_fail)
     sum_top = table_y - th - 8 * mm
     c.setFillColor(GOLD_LIGHT)
     c.setStrokeColor(MAROON)
@@ -320,10 +320,10 @@ def generate_marks_card_pdf(
     c.drawString(124 * mm, sum_top - 8.5 * mm, f"Percentage: {percentage:.2f}%")
     rank_text = f"#{class_rank} / {class_total_students}" if class_rank and class_total_students else "N/A"
     c.drawString(124 * mm, sum_top - 16.5 * mm, f"Grade: {overall_grade}  |  Rank: {rank_text}")
-    res_color = EMERALD if puc_class != "FAIL" else colors.HexColor("#B91C1C")
+    res_color = EMERALD if res_class != "FAIL" else colors.HexColor("#B91C1C")
     c.setFillColor(res_color)
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(124 * mm, sum_top - 25.5 * mm, f"RESULT: {puc_class}")
+    c.drawString(124 * mm, sum_top - 25.5 * mm, f"RESULT: {res_class}")
 
     # Seal, Scannable QR Code & Digital Signature Footer
     footer_y = 29 * mm
