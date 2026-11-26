@@ -10,7 +10,7 @@ const PORTAL_META = {
     icon: Shield,
     placeholder: "Enter Admin Username",
     accent: "bg-navy-900 text-gold-400",
-    hint: "Complete system, student, teacher, fee, exam & result approval control.",
+    hint: "Complete system, student, teacher, exam & result approval control.",
   },
   teacher: {
     label: "Teacher Portal",
@@ -31,7 +31,7 @@ const PORTAL_META = {
     icon: Users,
     placeholder: "Enter Parent Username",
     accent: "bg-amber-600 text-white",
-    hint: "Monitor your child's attendance, absent dates, fees, exams & published results.",
+    hint: "Monitor your child's attendance, absent dates, exams & published results.",
   },
 };
 

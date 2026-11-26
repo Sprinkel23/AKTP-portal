@@ -119,7 +119,7 @@ class AttendanceItem(BaseModel):
 
 
 class AttendanceBulkCreate(BaseModel):
-    class_id: int
+    class_id: Optional[int] = None
     attendance_date: date
     entries: List[AttendanceItem]
 
@@ -319,8 +319,16 @@ class TeacherStudentCreate(BaseModel):
     section: str = "A"
     address: Optional[str] = None
     student_phone: Optional[str] = None
-    parent_name: str
-    parent_phone: str
+    parent_name: Optional[str] = None
+    parent_phone: Optional[str] = None
     parent_email: Optional[str] = None
     student_password: Optional[str] = None
     parent_password: Optional[str] = None
+
+
+class StudentSignupRequest(BaseModel):
+    student_name: str = Field(..., min_length=2)
+    class_id: int
+    student_phone: str = Field(..., min_length=8)
+    parent_name: Optional[str] = None
+    parent_phone: Optional[str] = None

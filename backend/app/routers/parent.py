@@ -319,6 +319,7 @@ def parent_marks_card_pdf(student_id: int, exam_id: int, current_user: User = De
         teacher_remarks=remark,
         class_rank=rank,
         class_total_students=class_tot,
+        examination_id=ex.id,
     )
     return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="AK_MarksCard_{child.student_code}_Exam{ex.id}.pdf"'})
 

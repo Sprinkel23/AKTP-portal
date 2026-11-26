@@ -1,20 +1,36 @@
 import hashlib
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy.orm import Session
 
 from app.config import (
-    MSG91_AUTH_KEY,
-    MSG91_SENDER_ID,
-    MSG91_TEMPLATE_ID,
     WHATSAPP_ACCESS_TOKEN,
     WHATSAPP_API_VERSION,
     WHATSAPP_PHONE_NUMBER_ID,
 )
 from app.models import Notification, Parent
 from app.services.helpers import get_or_create_settings
+
+
+def format_wa_digits(phone: str) -> str:
+    digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+    if len(digits) == 10:
+        return "91" + digits
+    return digits
+
+
+def build_direct_links(phone: str, message: str) -> dict:
+    wa_digits = format_wa_digits(phone)
+    encoded = quote(message or "")
+    if not wa_digits:
+        return {"whatsapp_url": None, "sms_url": None}
+    return {
+        "whatsapp_url": f"https://wa.me/{wa_digits}?text={encoded}",
+        "sms_url": f"sms:+{wa_digits}?body={encoded}",
+    }
 
 
 def _build_dedup_hash(phone: str, channel: str, notification_type: str, dedup_key: str) -> str:
@@ -78,55 +94,16 @@ def send_notification(
                 return rec
 
     settings = get_or_create_settings(db)
-    status_val = "DEMO_SIMULATED"
-    provider_val = "DEMO"
+    status_val = "DISPATCH_READY"
+    provider_val = "DIRECT_WHATSAPP_SMS"
     provider_msg_id = None
     error_detail = None
     sent_at = None
 
     if channel == "SMS":
-        auth_key = settings.msg91_auth_key or MSG91_AUTH_KEY
-        sender_id = settings.msg91_sender_id or MSG91_SENDER_ID
-        template_id = settings.msg91_template_id or MSG91_TEMPLATE_ID
-        if settings.sms_enabled and auth_key:
-            provider_val = "MSG91"
-            try:
-                clean_phone = "".join(ch for ch in recipient_phone if ch.isdigit())
-                if len(clean_phone) == 10:
-                    clean_phone = "91" + clean_phone
-                payload = {
-                    "sender": sender_id or "AKTUIT",
-                    "route": "4",
-                    "country": "91",
-                    "sms": [{"message": message, "to": [clean_phone]}],
-                }
-                if template_id:
-                    payload["template_id"] = template_id
-                resp = httpx.post(
-                    "https://api.msg91.com/api/v2/sendsms",
-                    headers={"authkey": auth_key, "Content-Type": "application/json"},
-                    json=payload,
-                    timeout=10.0,
-                )
-                if 200 <= resp.status_code < 300:
-                    data = resp.json() if resp.content else {}
-                    if str(data.get("type", "")).lower() == "error":
-                        status_val = "FAILED"
-                        error_detail = str(data.get("message") or resp.text)
-                    else:
-                        status_val = "SENT"
-                        provider_msg_id = str(data.get("request_id") or data.get("message") or "msg91-ok")
-                        sent_at = datetime.utcnow()
-                else:
-                    status_val = "FAILED"
-                    error_detail = f"MSG91 HTTP {resp.status_code}: {resp.text[:250]}"
-            except Exception as exc:
-                status_val = "FAILED"
-                error_detail = f"MSG91 request failed: {exc}"
-        else:
-            status_val = "DEMO_SIMULATED"
-            provider_val = "DEMO"
-            error_detail = "DEMONSTRATION MODE: MSG91 credentials not configured or SMS disabled in Admin Settings."
+        status_val = "DISPATCH_READY"
+        provider_val = "DIRECT_SMS"
+        error_detail = None
 
     elif channel == "WHATSAPP":
         wa_token = settings.whatsapp_access_token or WHATSAPP_ACCESS_TOKEN
@@ -134,9 +111,7 @@ def send_notification(
         if settings.whatsapp_enabled and wa_token and wa_phone_id:
             provider_val = "WHATSAPP_CLOUD"
             try:
-                clean_phone = "".join(ch for ch in recipient_phone if ch.isdigit())
-                if len(clean_phone) == 10:
-                    clean_phone = "91" + clean_phone
+                clean_phone = format_wa_digits(recipient_phone)
                 url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{wa_phone_id}/messages"
                 payload = {
                     "messaging_product": "whatsapp",
@@ -167,9 +142,9 @@ def send_notification(
                 status_val = "FAILED"
                 error_detail = f"WhatsApp Cloud request failed: {exc}"
         else:
-            status_val = "DEMO_SIMULATED"
-            provider_val = "DEMO"
-            error_detail = "DEMONSTRATION MODE: WhatsApp Business Cloud API credentials not configured or disabled in Admin Settings."
+            status_val = "DISPATCH_READY"
+            provider_val = "DIRECT_WHATSAPP"
+            error_detail = None
 
     rec = Notification(
         recipient_user_id=recipient_user_id,

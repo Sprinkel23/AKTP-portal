@@ -256,25 +256,57 @@ def run_verification():
         qp_pdf = client.get(f"/api/teacher/question-papers/{good_qp.json()['id']}/pdf", headers=auth_header(teacher_auth["access_token"]))
         assert qp_pdf.status_code == 200 and qp_pdf.content.startswith(b"%PDF")
 
-        # 6c. Teacher Adds Student + Parent Phone & Prints Overall Student Result PDF + Class Rank check
+        # 6c. Teacher Adds Student (any class) + Unified All-Class Attendance + Absence Alert + Student Self-Signup + QR Verify
+        class1 = next(c for c in classes if c["grade_level"] == 1)
         t_st = client.post(
             "/api/teacher/students",
             headers=auth_header(teacher_auth["access_token"]),
             json={
                 "student_name": "Meera Nair",
-                "class_id": class10["id"],
+                "class_id": class1["id"],
                 "section": "A",
-                "parent_name": "Mr. Suresh Nair",
-                "parent_phone": "+919844445566",
+                "student_phone": "+919844445566",
             },
         )
         assert t_st.status_code == 200, t_st.text
         t_st_id = t_st.json()["id"]
         t_creds = t_st.json()["generated_credentials"]
         login(client, t_creds["student_username"], t_creds["student_password"], "student")
+
+        # Unified all-class attendance -> absent triggers real-time absence alerts
+        all_att_sheet = client.get(f"/api/teacher/attendance?attendance_date={today_str}", headers=auth_header(teacher_auth["access_token"]))
+        assert all_att_sheet.status_code == 200 and len(all_att_sheet.json()["students"]) >= 5
+        all_att_save = client.post(
+            "/api/teacher/attendance",
+            headers=auth_header(teacher_auth["access_token"]),
+            json={
+                "attendance_date": today_str,
+                "entries": [{"student_id": t_st_id, "status": "ABSENT", "remarks": "Family trip"}],
+            },
+        )
+        assert all_att_save.status_code == 200
+        assert len(all_att_save.json().get("absent_alerts", [])) >= 1
+        assert all_att_save.json()["absent_alerts"][0]["whatsapp_url"].startswith("https://wa.me/")
+
+        # Student self-signup by mobile number -> auto-generated login credentials
+        signup = client.post(
+            "/api/auth/student/signup",
+            json={"student_name": "Vikram SelfSignup", "class_id": class1["id"], "student_phone": "9855556677"},
+        )
+        assert signup.status_code == 200, signup.text
+        signup_creds = signup.json()["generated_credentials"]
+        signup_sid = signup.json()["user"]["student_id"]
+        login(client, signup_creds["student_username"], signup_creds["student_password"], "student")
+        client.delete(f"/api/admin/students/{signup_sid}?hard_delete=true", headers=auth_header(admin_auth["access_token"]))
+
+        # QR Verification endpoint for published marks card
+        qr_ver = client.get(f"/api/public/verify-markscard?code={student_auth['user']['student_code']}&exam={exam_id}")
+        assert qr_ver.status_code == 200 and qr_ver.json()["verified"] is True
+
         t_res_pdf = client.get("/api/teacher/results-pdf", headers=auth_header(teacher_auth["access_token"]))
         assert t_res_pdf.status_code == 200 and t_res_pdf.content.startswith(b"%PDF")
         assert st_results_after[0].get("class_rank") is not None
+        assert "dispatches" in rev.json() and len(rev.json()["dispatches"]) >= 1
         client.delete(f"/api/admin/students/{t_st_id}?hard_delete=true", headers=auth_header(admin_auth["access_token"]))
 
         # 7. Online Practice Test (No Answer Leak Before Submission)

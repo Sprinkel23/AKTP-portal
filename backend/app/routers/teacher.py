@@ -45,7 +45,7 @@ from app.services.helpers import (
     generate_unique_password,
     get_or_create_settings,
 )
-from app.services.notifications import send_notification
+from app.services.notifications import build_direct_links, send_notification
 from app.services.pdf_generator import generate_branded_table_pdf, generate_question_paper_pdf
 
 router = APIRouter(
@@ -82,23 +82,42 @@ def _assigned_pairs(t: Teacher) -> set[tuple[int, int]]:
     return {(a.class_id, a.subject_id) for a in t.assignments}
 
 
+def _all_active_class_ids(db: Session) -> list[int]:
+    return [c.id for c in db.query(SchoolClass).filter(SchoolClass.is_active == True).order_by(SchoolClass.grade_level.asc()).all()]
+
+
+@router.get("/classes")
+def list_all_classes_for_teacher(db: Session = Depends(get_db)):
+    classes = db.query(SchoolClass).filter(SchoolClass.is_active == True).order_by(SchoolClass.grade_level.asc(), SchoolClass.section.asc()).all()
+    subjects = db.query(Subject).filter(Subject.is_active == True).order_by(Subject.name.asc()).all()
+    return {
+        "classes": [
+            {"id": c.id, "grade_level": c.grade_level, "name": c.name, "section": c.section}
+            for c in classes
+        ],
+        "subjects": [
+            {"id": s.id, "name": s.name, "code": s.code}
+            for s in subjects
+        ],
+    }
+
+
 @router.get("/dashboard")
 def teacher_dashboard(current_user: User = Depends(require_roles(["teacher"])), db: Session = Depends(get_db)):
     t = _get_teacher(current_user, db)
-    class_ids = _assigned_class_ids(t)
-    students = db.query(Student).filter(Student.class_id.in_(class_ids), Student.is_active == True).all() if class_ids else []
+    all_classes = db.query(SchoolClass).filter(SchoolClass.is_active == True).all()
+    class_ids = {c.id for c in all_classes}
+    students = db.query(Student).filter(Student.is_active == True).all()
 
     today = date.today()
-    today_att = db.query(Attendance).filter(Attendance.class_id.in_(class_ids), Attendance.attendance_date == today).all() if class_ids else []
+    today_att = db.query(Attendance).filter(Attendance.attendance_date == today).all()
     today_present = sum(1 for a in today_att if a.status == "PRESENT")
 
     upcoming_exams = (
         db.query(Examination)
-        .filter(Examination.class_id.in_(class_ids), Examination.status == "SCHEDULED", Examination.end_date >= today)
+        .filter(Examination.status == "SCHEDULED", Examination.end_date >= today)
         .order_by(Examination.start_date.asc())
         .all()
-        if class_ids
-        else []
     )
     pending_subs = db.query(ResultApproval).filter(ResultApproval.submitted_by_user_id == current_user.id, ResultApproval.status == "PENDING").count()
     practice_tests = db.query(QuestionPaper).filter(QuestionPaper.teacher_id == t.id).count()
@@ -114,7 +133,7 @@ def teacher_dashboard(current_user: User = Depends(require_roles(["teacher"])), 
         "cards": {
             "assigned_classes": len(class_ids),
             "assigned_students": len(students),
-            "assigned_subjects": len({a.subject_id for a in t.assignments}),
+            "assigned_subjects": db.query(Subject).filter(Subject.is_active == True).count(),
             "today_attendance_present": today_present,
             "today_attendance_total": len(today_att),
             "upcoming_examinations": len(upcoming_exams),
@@ -151,14 +170,10 @@ def list_assigned_students(
     current_user: User = Depends(require_roles(["teacher"])),
     db: Session = Depends(get_db),
 ):
-    t = _get_teacher(current_user, db)
-    allowed_cids = _assigned_class_ids(t)
-    if class_id and class_id not in allowed_cids:
-        raise HTTPException(status_code=403, detail="You are not assigned to this class.")
-    target_cids = {class_id} if class_id else allowed_cids
-    if not target_cids:
-        return []
-    students = db.query(Student).filter(Student.class_id.in_(target_cids), Student.is_active == True).order_by(Student.student_code.asc()).all()
+    q = db.query(Student).filter(Student.is_active == True)
+    if class_id:
+        q = q.filter(Student.class_id == class_id)
+    students = q.order_by(Student.class_id.asc(), Student.student_code.asc()).all()
 
     out = []
     for st in students:
@@ -174,7 +189,9 @@ def list_assigned_students(
             "class_name": st.school_class.name if st.school_class else "",
             "section": st.section,
             "gender": st.gender,
+            "student_phone": st.student_phone,
             "parent_name": st.parent_name,
+            "parent_phone": st.parent_phone,
             "photo_path": st.photo_path,
             "attendance_percentage": pct,
             "working_days": tot_att,
@@ -202,11 +219,15 @@ def teacher_add_student(
     db: Session = Depends(get_db),
 ):
     t = _get_teacher(current_user, db)
-    if payload.class_id not in _assigned_class_ids(t):
-        raise HTTPException(status_code=403, detail="You can only add students to your assigned classes.")
     cls_obj = db.query(SchoolClass).filter(SchoolClass.id == payload.class_id).first()
     if not cls_obj:
         raise HTTPException(status_code=404, detail="Class not found.")
+
+    raw_parent_phone = (payload.parent_phone or payload.student_phone or "").strip()
+    if not raw_parent_phone:
+        raise HTTPException(status_code=400, detail="Student or parent mobile number is required.")
+    raw_student_phone = (payload.student_phone or raw_parent_phone).strip()
+    raw_parent_name = (payload.parent_name or "").strip() or f"Parent of {payload.student_name.strip()}"
 
     year = db.query(AcademicYear).filter(AcademicYear.is_current == True).first() or db.query(AcademicYear).first()
     student_role = db.query(Role).filter(Role.name == "student").first()
@@ -217,7 +238,7 @@ def teacher_add_student(
     s_user = User(
         username=student_code,
         email=f"{student_code.lower()}@student.aktuition.edu.in",
-        phone=payload.student_phone or payload.parent_phone,
+        phone=raw_student_phone,
         full_name=payload.student_name.strip(),
         password_hash=hash_password(s_pwd),
         role_id=student_role.id,
@@ -226,7 +247,7 @@ def teacher_add_student(
     db.add(s_user)
     db.flush()
 
-    parent_obj = db.query(Parent).filter(Parent.phone == payload.parent_phone.strip()).first()
+    parent_obj = db.query(Parent).filter(Parent.phone == raw_parent_phone).first()
     parent_is_new = False
     p_pwd_out = None
     if not parent_obj:
@@ -239,8 +260,8 @@ def teacher_add_student(
         p_user = User(
             username=p_uname,
             email=payload.parent_email,
-            phone=payload.parent_phone.strip(),
-            full_name=payload.parent_name.strip(),
+            phone=raw_parent_phone,
+            full_name=raw_parent_name,
             password_hash=hash_password(p_pwd),
             role_id=parent_role.id,
             is_active=True,
@@ -249,8 +270,8 @@ def teacher_add_student(
         db.flush()
         parent_obj = Parent(
             user_id=p_user.id,
-            parent_name=payload.parent_name.strip(),
-            phone=payload.parent_phone.strip(),
+            parent_name=raw_parent_name,
+            phone=raw_parent_phone,
             email=payload.parent_email,
             address=payload.address,
         )
@@ -268,10 +289,10 @@ def teacher_add_student(
         class_id=payload.class_id,
         section=payload.section or cls_obj.section,
         address=payload.address,
-        student_phone=payload.student_phone,
+        student_phone=raw_student_phone,
         parent_id=parent_obj.id,
-        parent_name=payload.parent_name.strip(),
-        parent_phone=payload.parent_phone.strip(),
+        parent_name=parent_obj.parent_name,
+        parent_phone=parent_obj.phone,
         admission_date=date.today(),
         assigned_teacher_id=t.id,
         is_active=True,
@@ -324,15 +345,10 @@ def teacher_overall_results_pdf(
     db: Session = Depends(get_db),
 ):
     t = _get_teacher(current_user, db)
-    allowed_cids = _assigned_class_ids(t)
-    if class_id and class_id not in allowed_cids:
-        raise HTTPException(status_code=403, detail="You are not assigned to this class.")
-    cids = {class_id} if class_id else allowed_cids
-    if not cids:
-        raise HTTPException(status_code=400, detail="No assigned classes found.")
-
     settings = get_or_create_settings(db)
-    q = db.query(Mark).join(Student).filter(Student.class_id.in_(cids), Mark.status == "PUBLISHED")
+    q = db.query(Mark).join(Student).filter(Mark.status == "PUBLISHED")
+    if class_id:
+        q = q.filter(Student.class_id == class_id)
     if examination_id:
         q = q.filter(Mark.examination_id == examination_id)
     marks = q.order_by(Mark.examination_id.desc(), Student.class_id.asc(), Student.student_code.asc()).all()
@@ -391,20 +407,20 @@ def teacher_overall_results_pdf(
 
 @router.get("/attendance")
 def get_class_attendance(
-    class_id: int,
     attendance_date: date,
+    class_id: Optional[int] = None,
     current_user: User = Depends(require_roles(["teacher"])),
     db: Session = Depends(get_db),
 ):
-    t = _get_teacher(current_user, db)
-    if class_id not in _assigned_class_ids(t):
-        raise HTTPException(status_code=403, detail="You are not assigned to this class.")
+    q = db.query(Student).filter(Student.is_active == True)
+    if class_id:
+        q = q.filter(Student.class_id == class_id)
+    students = q.order_by(Student.class_id.asc(), Student.student_code.asc()).all()
 
-    students = db.query(Student).filter(Student.class_id == class_id, Student.is_active == True).order_by(Student.student_code.asc()).all()
-    existing = {
-        a.student_id: a
-        for a in db.query(Attendance).filter(Attendance.class_id == class_id, Attendance.attendance_date == attendance_date).all()
-    }
+    att_q = db.query(Attendance).filter(Attendance.attendance_date == attendance_date)
+    if class_id:
+        att_q = att_q.filter(Attendance.class_id == class_id)
+    existing = {a.student_id: a for a in att_q.all()}
     return {
         "class_id": class_id,
         "attendance_date": attendance_date.isoformat(),
@@ -413,6 +429,11 @@ def get_class_attendance(
                 "student_id": s.id,
                 "student_code": s.student_code,
                 "student_name": s.student_name,
+                "class_id": s.class_id,
+                "class_name": s.school_class.name if s.school_class else "",
+                "section": s.section,
+                "student_phone": s.student_phone,
+                "parent_phone": s.parent_phone,
                 "status": existing[s.id].status if s.id in existing else "PRESENT",
                 "remarks": existing[s.id].remarks if s.id in existing else "",
                 "already_marked": s.id in existing,
@@ -430,16 +451,16 @@ def save_class_attendance(
     db: Session = Depends(get_db),
 ):
     t = _get_teacher(current_user, db)
-    if payload.class_id not in _assigned_class_ids(t):
-        raise HTTPException(status_code=403, detail="You are not assigned to this class.")
-
-    valid_ids = {
-        s.id for s in db.query(Student).filter(Student.class_id == payload.class_id, Student.is_active == True).all()
-    }
+    q = db.query(Student).filter(Student.is_active == True)
+    if payload.class_id:
+        q = q.filter(Student.class_id == payload.class_id)
+    students_map = {s.id: s for s in q.all()}
 
     saved = 0
+    absent_alerts = []
     for item in payload.entries:
-        if item.student_id not in valid_ids:
+        st = students_map.get(item.student_id)
+        if not st:
             continue
         st_val = item.status.strip().upper()
         if st_val not in {"PRESENT", "ABSENT"}:
@@ -452,12 +473,13 @@ def save_class_attendance(
         if existing:
             existing.status = st_val
             existing.remarks = item.remarks
+            existing.class_id = st.class_id
             existing.teacher_id = t.id
             existing.marked_by_user_id = current_user.id
         else:
             db.add(Attendance(
                 student_id=item.student_id,
-                class_id=payload.class_id,
+                class_id=st.class_id,
                 attendance_date=payload.attendance_date,
                 status=st_val,
                 teacher_id=t.id,
@@ -466,9 +488,67 @@ def save_class_attendance(
             ))
         saved += 1
 
-    log_audit(db, current_user.id, "SAVE_ATTENDANCE", "attendance", f"{payload.class_id}:{payload.attendance_date}", {"count": saved}, request)
+        if st_val == "ABSENT":
+            cls_label = f"{st.school_class.name} ({st.section})" if st.school_class else ""
+            note_txt = f" Note: {item.remarks}." if item.remarks else ""
+            msg = (
+                f"AK Tuition Absence Alert: {st.student_name} ({st.student_code}, {cls_label}) "
+                f"was marked ABSENT on {payload.attendance_date.isoformat()}.{note_txt} – AK Tuition"
+            )
+            seen_phones = set()
+            targets = [("parent", st.parent_phone, st.parent.user_id if st.parent else None, st.parent_id)]
+            if st.student_phone:
+                targets.append(("student", st.student_phone, st.user_id, None))
+            for tgt_role, raw_phone, uid, pid in targets:
+                clean_p = (raw_phone or "").strip()
+                tail = "".join(c for c in clean_p if c.isdigit())[-10:]
+                if not clean_p or tail in seen_phones:
+                    continue
+                seen_phones.add(tail)
+                notif = send_notification(
+                    db,
+                    recipient_phone=clean_p,
+                    channel="WHATSAPP",
+                    notification_type="ABSENT",
+                    message=msg,
+                    dedup_key=f"ABSENT_{st.id}_{payload.attendance_date.isoformat()}_{tail}",
+                    recipient_user_id=uid,
+                    student_id=st.id,
+                    parent_id=pid,
+                )
+                links = build_direct_links(clean_p, msg)
+                absent_alerts.append({
+                    "student_id": st.id,
+                    "student_code": st.student_code,
+                    "student_name": st.student_name,
+                    "class_name": cls_label,
+                    "target": tgt_role,
+                    "phone": clean_p,
+                    "status": notif.status,
+                    "message": msg,
+                    "whatsapp_url": links["whatsapp_url"],
+                    "sms_url": links["sms_url"],
+                })
+
+    log_audit(
+        db,
+        current_user.id,
+        "SAVE_ATTENDANCE",
+        "attendance",
+        f"{payload.class_id or 'ALL'}:{payload.attendance_date}",
+        {"count": saved, "absent_alerts": len(absent_alerts)},
+        request,
+    )
     db.commit()
-    return {"message": f"Attendance saved for {saved} student(s).", "saved_count": saved}
+    return {
+        "message": (
+            f"Attendance saved for {saved} student(s). {len(absent_alerts)} absence alert(s) triggered for registered numbers."
+            if absent_alerts
+            else f"Attendance saved for {saved} student(s)."
+        ),
+        "saved_count": saved,
+        "absent_alerts": absent_alerts,
+    }
 
 
 @router.get("/attendance/history")
@@ -477,18 +557,11 @@ def attendance_history(
     current_user: User = Depends(require_roles(["teacher"])),
     db: Session = Depends(get_db),
 ):
-    t = _get_teacher(current_user, db)
-    allowed_cids = _assigned_class_ids(t)
-    if class_id and class_id not in allowed_cids:
-        raise HTTPException(status_code=403, detail="Not assigned to this class.")
-    cids = {class_id} if class_id else allowed_cids
-    if not cids:
-        return []
-
+    q = db.query(Attendance)
+    if class_id:
+        q = q.filter(Attendance.class_id == class_id)
     rows = (
-        db.query(Attendance)
-        .filter(Attendance.class_id.in_(cids))
-        .order_by(Attendance.attendance_date.desc(), Attendance.student_id.asc())
+        q.order_by(Attendance.attendance_date.desc(), Attendance.student_id.asc())
         .limit(200)
         .all()
     )
@@ -510,27 +583,21 @@ def attendance_history(
 
 @router.get("/examinations")
 def list_teacher_examinations(current_user: User = Depends(require_roles(["teacher"])), db: Session = Depends(get_db)):
-    t = _get_teacher(current_user, db)
-    cids = _assigned_class_ids(t)
-    pairs = _assigned_pairs(t)
-    if not cids:
-        return []
-    exams = db.query(Examination).filter(Examination.class_id.in_(cids), Examination.status != "CANCELLED").order_by(Examination.start_date.desc()).all()
+    exams = db.query(Examination).filter(Examination.status != "CANCELLED").order_by(Examination.start_date.desc()).all()
     out = []
     for ex in exams:
         subjects = []
         for es in ex.exam_subjects:
-            if (ex.class_id, es.subject_id) in pairs:
-                ap = db.query(ResultApproval).filter(ResultApproval.examination_subject_id == es.id).order_by(ResultApproval.id.desc()).first()
-                subjects.append({
-                    "examination_subject_id": es.id,
-                    "subject_id": es.subject_id,
-                    "subject_name": es.subject.name if es.subject else "",
-                    "exam_date": es.exam_date.isoformat(),
-                    "max_marks": float(es.max_marks),
-                    "approval_status": ap.status if ap else "NOT_SUBMITTED",
-                    "rejection_reason": ap.rejection_reason if ap else None,
-                })
+            ap = db.query(ResultApproval).filter(ResultApproval.examination_subject_id == es.id).order_by(ResultApproval.id.desc()).first()
+            subjects.append({
+                "examination_subject_id": es.id,
+                "subject_id": es.subject_id,
+                "subject_name": es.subject.name if es.subject else "",
+                "exam_date": es.exam_date.isoformat(),
+                "max_marks": float(es.max_marks),
+                "approval_status": ap.status if ap else "NOT_SUBMITTED",
+                "rejection_reason": ap.rejection_reason if ap else None,
+            })
         if subjects:
             out.append({
                 "id": ex.id,
@@ -550,13 +617,10 @@ def get_marks_entry_sheet(
     current_user: User = Depends(require_roles(["teacher"])),
     db: Session = Depends(get_db),
 ):
-    t = _get_teacher(current_user, db)
     es = db.query(ExaminationSubject).filter(ExaminationSubject.id == examination_subject_id).first()
     if not es:
         raise HTTPException(status_code=404, detail="Examination subject not found.")
     ex = es.examination
-    if (ex.class_id, es.subject_id) not in _assigned_pairs(t):
-        raise HTTPException(status_code=403, detail="You are not assigned to this class and subject.")
 
     students = db.query(Student).filter(Student.class_id == ex.class_id, Student.is_active == True).order_by(Student.student_code.asc()).all()
     existing = {m.student_id: m for m in db.query(Mark).filter(Mark.examination_subject_id == es.id).all()}
@@ -597,8 +661,6 @@ def save_and_submit_marks(
     if not es or es.examination_id != payload.examination_id:
         raise HTTPException(status_code=404, detail="Examination subject not found.")
     ex = es.examination
-    if (ex.class_id, es.subject_id) not in _assigned_pairs(t):
-        raise HTTPException(status_code=403, detail="You are not assigned to this class and subject.")
 
     ap = db.query(ResultApproval).filter(ResultApproval.examination_subject_id == es.id).order_by(ResultApproval.id.desc()).first()
     if ap and ap.status == "PUBLISHED":
@@ -706,9 +768,6 @@ def create_question_paper(
     db: Session = Depends(get_db),
 ):
     t = _get_teacher(current_user, db)
-    if (payload.class_id, payload.subject_id) not in _assigned_pairs(t):
-        raise HTTPException(status_code=403, detail="You are not assigned to this class and subject.")
-
     if not payload.questions:
         raise HTTPException(status_code=400, detail="Add at least one question.")
 

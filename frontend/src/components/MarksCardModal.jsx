@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Download, Printer, X, Award } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { downloadAuthorizedFile, resolveAssetUrl } from "../api/client";
 
 export default function MarksCardModal({ result, pdfUrl, onClose }) {
@@ -195,6 +196,19 @@ export default function MarksCardModal({ result, pdfUrl, onClose }) {
                     <div>Issued via AKTP PORTAL</div>
                     <div>Digitally Verified Record</div>
                   </div>
+                </div>
+
+                {/* Scannable QR Verification Code */}
+                <div className="flex flex-col items-center p-2.5 rounded-xl border border-gold-500 bg-white shadow-sm">
+                  <QRCodeSVG
+                    value={`https://aktp-portal.netlify.app/verify?code=${result.student_code}&exam=${result.examination_id}&pct=${Number(result.percentage || 0).toFixed(1)}`}
+                    size={84}
+                    level="M"
+                    fgColor="#0A2463"
+                  />
+                  <span className="mt-1 text-[9px] font-bold tracking-wider uppercase text-navy-900">
+                    Scan QR to Verify
+                  </span>
                 </div>
 
                 {/* Director Signature (never fabricated) */}

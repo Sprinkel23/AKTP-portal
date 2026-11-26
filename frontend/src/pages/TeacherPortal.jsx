@@ -36,6 +36,10 @@ export default function TeacherPortal() {
   const [papers, setPapers] = useState([]);
   const [attempts, setAttempts] = useState([]);
   const [attHistory, setAttHistory] = useState([]);
+  const [allClasses, setAllClasses] = useState([]);
+  const [allSubjects, setAllSubjects] = useState([]);
+  const [absentAlerts, setAbsentAlerts] = useState([]);
+  const [studentClassFilter, setStudentClassFilter] = useState("");
   const [toast, setToast] = useState({ type: "", text: "" });
 
   // Attendance state
@@ -104,8 +108,9 @@ export default function TeacherPortal() {
 
   const loadAll = async () => {
     try {
-      const [dRes, sRes, exRes, qpRes, attHistRes, atmpRes] = await Promise.all([
+      const [dRes, clsRes, sRes, exRes, qpRes, attHistRes, atmpRes] = await Promise.all([
         api.get("/api/teacher/dashboard"),
+        api.get("/api/teacher/classes"),
         api.get("/api/teacher/students"),
         api.get("/api/teacher/examinations"),
         api.get("/api/teacher/question-papers"),
@@ -113,14 +118,13 @@ export default function TeacherPortal() {
         api.get("/api/teacher/test-attempts"),
       ]);
       setDash(dRes.data);
+      setAllClasses(clsRes.data.classes || []);
+      setAllSubjects(clsRes.data.subjects || []);
       setStudents(sRes.data);
       setExams(exRes.data);
       setPapers(qpRes.data);
       setAttHistory(attHistRes.data);
       setAttempts(atmpRes.data);
-      if (!attClassId && dRes.data.assignments?.length) {
-        setAttClassId(String(dRes.data.assignments[0].class_id));
-      }
     } catch (err) {
       notify(err.response?.data?.detail || "Error loading teacher portal.", "error");
     }
@@ -130,14 +134,15 @@ export default function TeacherPortal() {
     loadAll();
   }, []);
 
-  const uniqueClasses = Array.from(
-    new Map((dash?.assignments || []).map((a) => [a.class_id, { id: a.class_id, name: a.class_name }])).values()
-  );
+  const uniqueClasses = allClasses.length
+    ? allClasses.map((c) => ({ id: c.id, name: `${c.name} (${c.section})` }))
+    : Array.from(new Map((dash?.assignments || []).map((a) => [a.class_id, { id: a.class_id, name: a.class_name }])).values());
 
   const loadAttendanceSheet = async () => {
-    if (!attClassId || !attDate) return;
+    if (!attDate) return;
     try {
-      const res = await api.get(`/api/teacher/attendance?class_id=${attClassId}&attendance_date=${attDate}`);
+      const clsParam = attClassId ? `&class_id=${attClassId}` : "";
+      const res = await api.get(`/api/teacher/attendance?attendance_date=${attDate}${clsParam}`);
       setAttRows(res.data.students);
     } catch (err) {
       notify(err.response?.data?.detail || "Could not load attendance sheet.", "error");
@@ -145,7 +150,7 @@ export default function TeacherPortal() {
   };
 
   useEffect(() => {
-    if (tab === "attendance" && attClassId) {
+    if (tab === "attendance") {
       loadAttendanceSheet();
     }
   }, [tab, attClassId, attDate]);
@@ -166,7 +171,7 @@ export default function TeacherPortal() {
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "students", label: "Assigned Students", icon: Users },
+    { id: "students", label: "All Students", icon: Users },
     { id: "attendance", label: "Daily Attendance", icon: ClipboardCheck },
     { id: "marks", label: "Marks Entry", icon: FileEdit },
     { id: "papers", label: "Question Papers", icon: FilePlus2 },
@@ -245,7 +250,17 @@ export default function TeacherPortal() {
       {tab === "students" && (
         <div className="space-y-4">
           <div className="bg-white rounded-2xl p-4 shadow-sm border flex flex-wrap items-center justify-between gap-3">
-            <div className="font-bold text-navy-900">Assigned Students &amp; Academic Summary</div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="font-bold text-navy-900">All Students (Unified Classes) &amp; Academic Summary</div>
+              <select
+                value={studentClassFilter}
+                onChange={(e) => setStudentClassFilter(e.target.value)}
+                className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold"
+              >
+                <option value="">All Classes Together</option>
+                {uniqueClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => downloadAuthorizedFile("/api/teacher/results-pdf", "AK_Teacher_Overall_Results.pdf")}
@@ -288,7 +303,7 @@ export default function TeacherPortal() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {students.map((s) => (
+                {(studentClassFilter ? students.filter((s) => String(s.class_id) === String(studentClassFilter)) : students).map((s) => (
                   <tr key={s.id}>
                     <td className="p-3 font-mono font-bold text-royal-700">{s.student_code}</td>
                     <td className="p-3 font-semibold">{s.student_name}</td>
@@ -313,8 +328,9 @@ export default function TeacherPortal() {
           <div className="bg-white rounded-2xl p-5 shadow-sm border space-y-4">
             <div className="flex flex-wrap gap-3 items-end">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Select Class</label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Filter Class (Optional)</label>
                 <select value={attClassId} onChange={(e) => setAttClassId(e.target.value)} className="rounded-lg border px-3 py-2 text-sm">
+                  <option value="">All Classes Together</option>
                   {uniqueClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
@@ -331,6 +347,7 @@ export default function TeacherPortal() {
                   <tr>
                     <th className="p-2.5 text-left">Student ID</th>
                     <th className="p-2.5 text-left">Student Name</th>
+                    <th className="p-2.5 text-left">Class</th>
                     <th className="p-2.5 text-center">Status</th>
                     <th className="p-2.5 text-left">Remarks</th>
                   </tr>
@@ -340,6 +357,7 @@ export default function TeacherPortal() {
                     <tr key={row.student_id}>
                       <td className="p-2.5 font-mono font-bold text-royal-700">{row.student_code}</td>
                       <td className="p-2.5 font-medium">{row.student_name}</td>
+                      <td className="p-2.5 text-xs text-slate-600">{row.class_name} ({row.section})</td>
                       <td className="p-2.5 text-center space-x-2">
                         {["PRESENT", "ABSENT"].map((opt) => (
                           <button
@@ -382,10 +400,11 @@ export default function TeacherPortal() {
               onClick={async () => {
                 try {
                   const res = await api.post("/api/teacher/attendance", {
-                    class_id: Number(attClassId),
+                    class_id: attClassId ? Number(attClassId) : null,
                     attendance_date: attDate,
                     entries: attRows.map((r) => ({ student_id: r.student_id, status: r.status, remarks: r.remarks })),
                   });
+                  setAbsentAlerts(res.data.absent_alerts || []);
                   notify(res.data.message);
                   loadAll();
                 } catch (err) {
@@ -394,8 +413,43 @@ export default function TeacherPortal() {
               }}
               className="px-6 py-2.5 rounded-xl bg-navy-900 text-white text-sm font-bold"
             >
-              Save Attendance
+              Save Attendance &amp; Trigger Absence Alerts
             </button>
+
+            {absentAlerts.length > 0 && (
+              <div className="mt-4 p-4 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
+                <div className="font-bold text-amber-950 text-sm">
+                  Absence Alerts Triggered for Registered Numbers ({absentAlerts.length})
+                </div>
+                <p className="text-xs text-amber-800">
+                  Send instant notification to the registered WhatsApp or SMS number for each absent student:
+                </p>
+                <div className="space-y-2">
+                  {absentAlerts.map((al, i) => (
+                    <div key={i} className="p-2.5 rounded-lg bg-white border flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div>
+                        <strong>{al.student_name}</strong> ({al.student_code}, {al.class_name}) • <span className="uppercase">{al.target}</span>: <strong className="font-mono">{al.phone}</strong>
+                        <span className={`ml-2 px-1.5 py-0.5 rounded font-bold ${al.status === "SENT" ? "bg-emerald-100 text-emerald-800" : "bg-blue-50 text-royal-700"}`}>
+                          {al.status === "SENT" ? "AUTO SENT" : "READY"}
+                        </span>
+                      </div>
+                      <div className="flex gap-2">
+                        {al.whatsapp_url && (
+                          <a href={al.whatsapp_url} target="_blank" rel="noreferrer" className="px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold">
+                            Send WhatsApp
+                          </a>
+                        )}
+                        {al.sms_url && (
+                          <a href={al.sms_url} className="px-3 py-1 rounded-lg bg-navy-900 text-white font-bold">
+                            Send SMS
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-2xl p-5 shadow-sm border">
@@ -575,7 +629,10 @@ export default function TeacherPortal() {
               </select>
               <select required value={qpForm.subject_id} onChange={(e) => setQpForm({ ...qpForm, subject_id: e.target.value })} className="rounded-lg border px-3 py-2">
                 <option value="">Select Subject</option>
-                {Array.from(new Map((dash?.assignments || []).map((a) => [a.subject_id, { id: a.subject_id, name: a.subject_name }])).values()).map((s) => (
+                {(allSubjects.length
+                  ? allSubjects
+                  : Array.from(new Map((dash?.assignments || []).map((a) => [a.subject_id, { id: a.subject_id, name: a.subject_name }])).values())
+                ).map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
@@ -870,6 +927,8 @@ export default function TeacherPortal() {
                   const res = await api.post("/api/teacher/students", {
                     ...studentForm,
                     class_id: Number(studentForm.class_id),
+                    parent_name: studentForm.parent_name || null,
+                    parent_phone: studentForm.parent_phone || studentForm.student_phone || null,
                     student_password: studentForm.student_password || null,
                     parent_password: studentForm.parent_password || null,
                   });
@@ -883,14 +942,14 @@ export default function TeacherPortal() {
               }}
               className="grid sm:grid-cols-2 gap-3 text-sm"
             >
-              <input required placeholder="Student Full Name" value={studentForm.student_name} onChange={(e) => setStudentForm({ ...studentForm, student_name: e.target.value })} className="rounded-lg border px-3 py-2" />
+              <input required placeholder="Student Full Name *" value={studentForm.student_name} onChange={(e) => setStudentForm({ ...studentForm, student_name: e.target.value })} className="rounded-lg border px-3 py-2" />
               <select required value={studentForm.class_id} onChange={(e) => setStudentForm({ ...studentForm, class_id: e.target.value })} className="rounded-lg border px-3 py-2">
-                <option value="">Select Assigned Class</option>
+                <option value="">Select Class *</option>
                 {uniqueClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-              <input required placeholder="Parent / Guardian Name" value={studentForm.parent_name} onChange={(e) => setStudentForm({ ...studentForm, parent_name: e.target.value })} className="rounded-lg border px-3 py-2" />
-              <input required placeholder="Parent Phone Number" value={studentForm.parent_phone} onChange={(e) => setStudentForm({ ...studentForm, parent_phone: e.target.value })} className="rounded-lg border px-3 py-2" />
-              <input placeholder="Student Phone Number" value={studentForm.student_phone} onChange={(e) => setStudentForm({ ...studentForm, student_phone: e.target.value })} className="rounded-lg border px-3 py-2" />
+              <input required placeholder="Student / Parent Mobile Number *" value={studentForm.student_phone} onChange={(e) => setStudentForm({ ...studentForm, student_phone: e.target.value })} className="rounded-lg border px-3 py-2" />
+              <input placeholder="Parent Phone (if different)" value={studentForm.parent_phone} onChange={(e) => setStudentForm({ ...studentForm, parent_phone: e.target.value })} className="rounded-lg border px-3 py-2" />
+              <input placeholder="Parent / Guardian Name (optional)" value={studentForm.parent_name} onChange={(e) => setStudentForm({ ...studentForm, parent_name: e.target.value })} className="rounded-lg border px-3 py-2" />
               <select value={studentForm.gender} onChange={(e) => setStudentForm({ ...studentForm, gender: e.target.value })} className="rounded-lg border px-3 py-2">
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
@@ -932,6 +991,14 @@ export default function TeacherPortal() {
               </div>
             </div>
             <div className="flex justify-end gap-2">
+              <a
+                href={`https://wa.me/${String(credsModal.parent_phone || "").replace(/\D/g, "").replace(/^(\d{10})$/, "91$1")}?text=${encodeURIComponent(`AK TUITION PORTAL LOGIN\nStudent: ${credsModal.student_name}\nStudent ID: ${credsModal.student_username}\nStudent Password: ${credsModal.student_password}\nParent Login Phone: ${credsModal.parent_phone}\nPortal: https://aktp-portal.netlify.app`)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+              >
+                Send on WhatsApp
+              </a>
               <button
                 type="button"
                 onClick={() => {

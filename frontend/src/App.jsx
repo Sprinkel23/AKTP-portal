@@ -7,6 +7,7 @@ import AdminPortal from "./pages/AdminPortal";
 import TeacherPortal from "./pages/TeacherPortal";
 import StudentPortal from "./pages/StudentPortal";
 import ParentPortal from "./pages/ParentPortal";
+import VerifyMarksPage from "./pages/VerifyMarksPage";
 
 function ProtectedRoute({ allowedRole, children }) {
   const { user, loading } = useAuth();
@@ -33,6 +34,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<PortalHomePage />} />
           <Route path="/website" element={<HomePage />} />
+          <Route path="/verify" element={<VerifyMarksPage />} />
           <Route path="/login" element={<PortalHomePage />} />
           <Route path="/login/:role" element={<PortalHomePage />} />
           <Route

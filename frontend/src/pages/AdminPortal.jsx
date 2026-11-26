@@ -47,10 +47,7 @@ const REPORT_LIST = [
   { id: "examination_results", label: "7. Examination Results" },
   { id: "individual_marks_card", label: "8. Individual Marks Card (PDF)", pdfOnly: true },
   { id: "class_wise_performance", label: "9. Class-wise Performance" },
-  { id: "fee_collection", label: "10. Fee Collection Report" },
-  { id: "pending_fees", label: "11. Pending Fee Report" },
-  { id: "student_payment_history", label: "12. Student Payment History" },
-  { id: "teacher_report", label: "13. Teacher Report" },
+  { id: "teacher_report", label: "10. Teacher Report" },
 ];
 
 export default function AdminPortal() {
@@ -60,9 +57,9 @@ export default function AdminPortal() {
   const [teachers, setTeachers] = useState([]);
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
-  const [feesData, setFeesData] = useState({ student_fees: [], payments: [] });
   const [exams, setExams] = useState([]);
   const [approvals, setApprovals] = useState([]);
+  const [publishDispatches, setPublishDispatches] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [notifData, setNotifData] = useState({ mode: {}, notifications: [] });
   const [settings, setSettings] = useState(null);
@@ -135,13 +132,12 @@ export default function AdminPortal() {
 
   const loadAll = async () => {
     try {
-      const [dRes, sRes, tRes, cRes, subRes, fRes, exRes, apRes, anRes, nRes, setRes] = await Promise.all([
+      const [dRes, sRes, tRes, cRes, subRes, exRes, apRes, anRes, nRes, setRes] = await Promise.all([
         api.get("/api/admin/dashboard"),
         api.get("/api/admin/students"),
         api.get("/api/admin/teachers"),
         api.get("/api/admin/classes"),
         api.get("/api/admin/subjects"),
-        api.get("/api/admin/fees"),
         api.get("/api/admin/examinations"),
         api.get("/api/admin/result-approvals"),
         api.get("/api/admin/announcements"),
@@ -153,7 +149,6 @@ export default function AdminPortal() {
       setTeachers(tRes.data);
       setClasses(cRes.data);
       setSubjects(subRes.data);
-      setFeesData(fRes.data);
       setExams(exRes.data);
       setApprovals(apRes.data);
       setAnnouncements(anRes.data);
@@ -184,10 +179,9 @@ export default function AdminPortal() {
     { id: "students", label: "Students", icon: Users },
     { id: "teachers", label: "Teachers", icon: UserCheck },
     { id: "classes", label: "Classes & Subjects", icon: BookOpen },
-    { id: "fees", label: "Fees & Payments", icon: IndianRupee },
     { id: "examinations", label: "Examinations", icon: Calendar },
     { id: "approvals", label: "Result Approvals", icon: CheckSquare, badge: pendingCount },
-    { id: "notifications", label: "SMS & WhatsApp", icon: Bell },
+    { id: "notifications", label: "WhatsApp & SMS Alerts", icon: Bell },
     { id: "announcements", label: "News & Notices", icon: Megaphone },
     { id: "reports", label: "PDF & Excel Reports", icon: FileSpreadsheet },
     { id: "settings", label: "Settings & Audit", icon: Settings },
@@ -307,6 +301,7 @@ export default function AdminPortal() {
         rejection_reason: rejectReasonMap[approvalId] || "",
         send_notifications: true,
       });
+      setPublishDispatches(res.data.dispatches || []);
       notify(res.data.message);
       loadAll();
     } catch (err) {
@@ -367,8 +362,6 @@ export default function AdminPortal() {
               { label: "Total Students", val: dash.cards.total_students, color: "border-royal-500" },
               { label: "Total Teachers", val: dash.cards.total_teachers, color: "border-navy-900" },
               { label: "Total Classes", val: dash.cards.total_classes, color: "border-indigo-500" },
-              { label: "Total Fees Collected", val: `₹${dash.cards.total_fees_collected.toLocaleString("en-IN")}`, color: "border-emerald-600" },
-              { label: "Pending Fees", val: `₹${dash.cards.pending_fees.toLocaleString("en-IN")}`, color: "border-amber-500" },
               { label: "Today's Attendance", val: `${dash.cards.today_attendance_present}/${dash.cards.today_attendance_total} (${dash.cards.today_attendance_pct}%)`, color: "border-sky-600" },
               { label: "Overall Attendance %", val: `${dash.cards.overall_attendance_pct}%`, color: "border-teal-600" },
               { label: "Upcoming Examinations", val: dash.cards.upcoming_examinations, color: "border-purple-600" },
@@ -384,20 +377,6 @@ export default function AdminPortal() {
           </div>
 
           <div className="grid lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
-              <h3 className="font-bold text-navy-900 mb-3 text-sm">Monthly Fee Collection (₹)</h3>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dash.charts.monthly_fee_collection}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" fontSize={11} />
-                    <YAxis fontSize={11} />
-                    <Tooltip />
-                    <Bar dataKey="amount" fill="#1E40AF" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
 
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
               <h3 className="font-bold text-navy-900 mb-3 text-sm">Student Enrollment Growth</h3>
@@ -535,7 +514,7 @@ export default function AdminPortal() {
                   <th className="p-3 text-left">Student</th>
                   <th className="p-3 text-left">Class</th>
                   <th className="p-3 text-left">Parent & Phone</th>
-                  <th className="p-3 text-right">Fees (Paid / Total)</th>
+                  <th className="p-3 text-left">Student Phone</th>
                   <th className="p-3 text-center">Status</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
@@ -564,9 +543,8 @@ export default function AdminPortal() {
                       <div className="font-medium">{st.parent_name}</div>
                       <div className="text-xs text-slate-500">{st.parent_phone}</div>
                     </td>
-                    <td className="p-3 text-right">
-                      <div className="font-semibold text-emerald-700">₹{st.paid_fees.toLocaleString("en-IN")} / ₹{st.total_fees.toLocaleString("en-IN")}</div>
-                      <div className="text-xs text-amber-700">Pending: ₹{st.pending_fees.toLocaleString("en-IN")}</div>
+                    <td className="p-3 text-xs font-mono text-slate-700">
+                      {st.student_phone || st.parent_phone || "-"}
                     </td>
                     <td className="p-3 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${st.is_active ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-700"}`}>
@@ -857,11 +835,10 @@ export default function AdminPortal() {
               className="bg-white rounded-2xl p-5 shadow-sm border space-y-3"
             >
               <h3 className="font-bold text-navy-900">Create Class / Section (1–10)</h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <input type="number" min={1} max={10} required placeholder="Grade (1-10)" value={classForm.grade_level} onChange={(e) => setClassForm({ ...classForm, grade_level: e.target.value, name: `Class ${e.target.value}` })} className="rounded-lg border px-3 py-2 text-sm" />
                 <input required placeholder="Class Name" value={classForm.name} onChange={(e) => setClassForm({ ...classForm, name: e.target.value })} className="rounded-lg border px-3 py-2 text-sm" />
                 <input required placeholder="Section (A, B...)" value={classForm.section} onChange={(e) => setClassForm({ ...classForm, section: e.target.value })} className="rounded-lg border px-3 py-2 text-sm" />
-                <input type="number" required placeholder="Tuition Fee" value={classForm.tuition_fee} onChange={(e) => setClassForm({ ...classForm, tuition_fee: e.target.value })} className="rounded-lg border px-3 py-2 text-sm" />
               </div>
               <button type="submit" className="px-4 py-2 rounded-xl bg-navy-900 text-white text-sm font-semibold">Add Class Section</button>
             </form>
@@ -949,7 +926,6 @@ export default function AdminPortal() {
                     Strength: {c.student_strength} / {c.capacity}
                   </span>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">Annual Tuition Fee: ₹{c.tuition_fee.toLocaleString("en-IN")}</div>
                 <div className="flex flex-wrap gap-1 mt-3">
                   {c.subjects.map((s) => (
                     <span key={s.id} className="px-2 py-0.5 rounded bg-slate-100 text-xs text-slate-700">{s.code}</span>
@@ -957,88 +933,6 @@ export default function AdminPortal() {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* FEES & PAYMENTS */}
-      {tab === "fees" && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
-            <div className="p-4 border-b font-bold text-navy-900">Student-Wise Tuition Fee Ledger</div>
-            <table className="w-full text-sm">
-              <thead className="bg-navy-900 text-white text-xs uppercase">
-                <tr>
-                  <th className="p-3 text-left">Student ID</th>
-                  <th className="p-3 text-left">Name</th>
-                  <th className="p-3 text-left">Class</th>
-                  <th className="p-3 text-right">Total Fees</th>
-                  <th className="p-3 text-right">Paid</th>
-                  <th className="p-3 text-right">Pending</th>
-                  <th className="p-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {feesData.student_fees.map((f) => (
-                  <tr key={f.fee_id}>
-                    <td className="p-3 font-mono font-bold text-royal-700">{f.student_code}</td>
-                    <td className="p-3 font-medium">{f.student_name}</td>
-                    <td className="p-3">{f.class_name}</td>
-                    <td className="p-3 text-right">₹{f.total_fees.toLocaleString("en-IN")}</td>
-                    <td className="p-3 text-right text-emerald-700 font-semibold">₹{f.paid_amount.toLocaleString("en-IN")}</td>
-                    <td className="p-3 text-right text-amber-700 font-bold">₹{f.pending_amount.toLocaleString("en-IN")}</td>
-                    <td className="p-3 text-right">
-                      <button
-                        onClick={() => {
-                          setPaymentModal(f);
-                          setPaymentForm({ amount: f.pending_amount || "", payment_mode: "UPI", reference_number: "", remarks: "" });
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-navy-900 text-white text-xs font-semibold"
-                      >
-                        Record Payment
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
-            <div className="p-4 border-b font-bold text-navy-900">Recent Payment History & PDF Receipts</div>
-            <table className="w-full text-sm">
-              <thead className="bg-slate-100 text-slate-700 text-xs uppercase">
-                <tr>
-                  <th className="p-3 text-left">Receipt No</th>
-                  <th className="p-3 text-left">Date</th>
-                  <th className="p-3 text-left">Student</th>
-                  <th className="p-3 text-left">Mode</th>
-                  <th className="p-3 text-left">Reference</th>
-                  <th className="p-3 text-right">Amount</th>
-                  <th className="p-3 text-right">Receipt PDF</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {feesData.payments.map((p) => (
-                  <tr key={p.id}>
-                    <td className="p-3 font-mono font-semibold text-navy-900">{p.receipt_number}</td>
-                    <td className="p-3">{p.payment_date}</td>
-                    <td className="p-3">{p.student_name} ({p.student_code})</td>
-                    <td className="p-3">{p.payment_mode}</td>
-                    <td className="p-3 text-xs text-slate-500">{p.reference_number || "-"}</td>
-                    <td className="p-3 text-right font-bold">₹{p.amount.toLocaleString("en-IN")}</td>
-                    <td className="p-3 text-right">
-                      <button
-                        onClick={() => downloadAuthorizedFile(`/api/admin/payments/${p.id}/receipt-pdf`, `AK_Receipt_${p.receipt_number}.pdf`)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-royal-700 text-xs font-semibold"
-                      >
-                        <Download className="w-3.5 h-3.5" /> PDF
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         </div>
       )}
@@ -1172,6 +1066,40 @@ export default function AdminPortal() {
               <Download className="w-4 h-4" /> Print Overall AK Tuition Marks PDF
             </button>
           </div>
+          {publishDispatches.length > 0 && (
+            <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="font-bold text-emerald-900 text-sm">
+                  Real-Time Result Alerts Dispatched / Ready ({publishDispatches.length})
+                </div>
+                <button onClick={() => setPublishDispatches([])} className="text-xs text-slate-500 hover:underline">Dismiss</button>
+              </div>
+              <div className="space-y-1.5">
+                {publishDispatches.map((d, idx) => (
+                  <div key={idx} className="p-2.5 rounded-lg bg-white border flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div>
+                      <strong>{d.student_name}</strong> ({d.student_code}) • <span className="uppercase">{d.target}</span>: <strong className="font-mono">{d.phone}</strong>
+                      <span className={`ml-2 px-1.5 py-0.5 rounded font-bold ${d.status === "SENT" ? "bg-emerald-100 text-emerald-800" : "bg-blue-50 text-royal-700"}`}>
+                        {d.status === "SENT" ? "AUTO SENT" : "READY"}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      {d.whatsapp_url && (
+                        <a href={d.whatsapp_url} target="_blank" rel="noreferrer" className="px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold">
+                          Send WhatsApp
+                        </a>
+                      )}
+                      {d.sms_url && (
+                        <a href={d.sms_url} className="px-3 py-1 rounded-lg bg-navy-900 text-white font-bold">
+                          Send SMS
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {approvals.length === 0 ? (
             <div className="bg-white rounded-2xl p-8 text-center text-slate-500 border">No marks submissions found yet.</div>
           ) : (
@@ -1245,19 +1173,15 @@ export default function AdminPortal() {
         </div>
       )}
 
-      {/* NOTIFICATIONS (SMS & WHATSAPP) */}
+      {/* NOTIFICATIONS (WHATSAPP & SMS ALERTS) */}
       {tab === "notifications" && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl p-4 border flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm">
-              <strong>Gateway Status:</strong>{" "}
-              SMS (MSG91):{" "}
-              <span className={`font-bold ${notifData.mode?.sms_live ? "text-emerald-700" : "text-amber-700"}`}>
-                {notifData.mode?.sms_live ? "LIVE CONFIGURED" : "DEMONSTRATION MODE (configure MSG91 key in Settings)"}
-              </span>{" "}
-              • WhatsApp Cloud:{" "}
-              <span className={`font-bold ${notifData.mode?.whatsapp_live ? "text-emerald-700" : "text-amber-700"}`}>
-                {notifData.mode?.whatsapp_live ? "LIVE CONFIGURED" : "DEMONSTRATION MODE (configure Meta token in Settings)"}
+              <strong>Real-Time Result &amp; Absence Messaging:</strong>{" "}
+              WhatsApp Cloud API:{" "}
+              <span className={`font-bold ${notifData.mode?.whatsapp_live ? "text-emerald-700" : "text-royal-700"}`}>
+                {notifData.mode?.whatsapp_live ? "AUTO CLOUD ENABLED" : "DIRECT WHATSAPP & SMS DISPATCH ACTIVE"}
               </span>
             </div>
           </div>
@@ -1270,7 +1194,7 @@ export default function AdminPortal() {
                   ...notifForm,
                   class_id: notifForm.class_id ? Number(notifForm.class_id) : null,
                 });
-                notify(`Dispatched ${res.data.dispatched_count} notification(s). Check delivery status below.`);
+                notify(`Prepared / dispatched ${res.data.dispatched_count} notification(s) below.`);
                 loadAll();
               } catch (err) {
                 notify(err.response?.data?.detail || "Dispatch failed.", "error");
@@ -1278,20 +1202,19 @@ export default function AdminPortal() {
             }}
             className="bg-white rounded-2xl p-5 shadow-sm border space-y-3"
           >
-            <h3 className="font-bold text-navy-900">Send Parent Notification (SMS / WhatsApp)</h3>
+            <h3 className="font-bold text-navy-900">Send Parent Notification (WhatsApp / SMS)</h3>
             <div className="grid sm:grid-cols-3 gap-3">
               <select value={notifForm.notification_type} onChange={(e) => setNotifForm({ ...notifForm, notification_type: e.target.value })} className="rounded-lg border px-3 py-2 text-sm">
                 <option value="TEST_REMINDER">Test Reminder</option>
                 <option value="EXAM_TIMETABLE">Exam Timetable Update</option>
-                <option value="FEE_REMINDER">Fee Reminder</option>
                 <option value="HOLIDAY">Holiday Announcement</option>
                 <option value="PARENT_MEETING">Parent Meeting</option>
                 <option value="ANNOUNCEMENT">Academic Announcement</option>
               </select>
               <select value={notifForm.channel} onChange={(e) => setNotifForm({ ...notifForm, channel: e.target.value })} className="rounded-lg border px-3 py-2 text-sm">
-                <option value="SMS">SMS (MSG91)</option>
-                <option value="WHATSAPP">WhatsApp Business Cloud</option>
-                <option value="BOTH">Both SMS & WhatsApp</option>
+                <option value="WHATSAPP">WhatsApp</option>
+                <option value="SMS">SMS</option>
+                <option value="BOTH">Both WhatsApp & SMS</option>
               </select>
               <select value={notifForm.class_id} onChange={(e) => setNotifForm({ ...notifForm, class_id: e.target.value })} className="rounded-lg border px-3 py-2 text-sm">
                 <option value="">All Active Students</option>
@@ -1332,14 +1255,26 @@ export default function AdminPortal() {
                     <td className="p-3">
                       <span className={`px-2 py-0.5 rounded font-bold ${
                         n.status === "SENT" ? "bg-emerald-100 text-emerald-800" :
-                        n.status === "DEMO_SIMULATED" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-700"
+                        n.status === "DISPATCH_READY" ? "bg-blue-50 text-royal-700" : "bg-red-100 text-red-700"
                       }`}>
                         {n.status}
                       </span>
                       <div className="text-[10px] text-slate-500 mt-0.5">{n.provider}</div>
                     </td>
-                    <td className="p-3">
+                    <td className="p-3 space-y-1.5">
                       <div>{n.message}</div>
+                      <div className="flex flex-wrap gap-2">
+                        {n.whatsapp_url && (
+                          <a href={n.whatsapp_url} target="_blank" rel="noreferrer" className="px-2.5 py-0.5 rounded bg-emerald-600 text-white text-[11px] font-bold">
+                            Send WhatsApp
+                          </a>
+                        )}
+                        {n.sms_url && (
+                          <a href={n.sms_url} className="px-2.5 py-0.5 rounded bg-navy-900 text-white text-[11px] font-bold">
+                            Send SMS
+                          </a>
+                        )}
+                      </div>
                       {n.error_detail && <div className="text-[11px] text-amber-700 mt-0.5">{n.error_detail}</div>}
                     </td>
                   </tr>
@@ -1471,7 +1406,7 @@ export default function AdminPortal() {
             }}
             className="bg-white rounded-2xl p-6 shadow-sm border space-y-4"
           >
-            <h3 className="font-bold text-navy-900 text-lg">Institution, Signature & Gateway Settings</h3>
+            <h3 className="font-bold text-navy-900 text-lg">Institution &amp; Signature Settings</h3>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Tuition Name</label>
@@ -1526,22 +1461,16 @@ export default function AdminPortal() {
               </div>
 
               <div className="p-4 rounded-xl bg-slate-50 border space-y-2 text-xs">
-                <div className="font-bold text-sm text-navy-900">SMS (MSG91) & WhatsApp Cloud Credentials</div>
+                <div className="font-bold text-sm text-navy-900">WhatsApp Business Cloud API (Optional Auto-Send)</div>
+                <p className="text-[11px] text-slate-500">
+                  Leave blank to use direct 1-click WhatsApp &amp; SMS alerts with your own number, or enter Meta Cloud credentials for automatic API delivery.
+                </p>
                 <div className="flex gap-4">
                   <label className="inline-flex items-center gap-1.5">
-                    <input type="checkbox" checked={settings.sms_enabled} onChange={(e) => setSettings({ ...settings, sms_enabled: e.target.checked })} />
-                    Enable Live SMS
-                  </label>
-                  <label className="inline-flex items-center gap-1.5">
                     <input type="checkbox" checked={settings.whatsapp_enabled} onChange={(e) => setSettings({ ...settings, whatsapp_enabled: e.target.checked })} />
-                    Enable Live WhatsApp
+                    Enable WhatsApp Cloud Auto-Send
                   </label>
                 </div>
-                <input
-                  placeholder={settings.has_msg91_auth_key ? "MSG91 Auth Key (configured — leave blank to keep)" : "MSG91 Auth Key"}
-                  onChange={(e) => setSettings({ ...settings, msg91_auth_key: e.target.value })}
-                  className="w-full rounded border px-2.5 py-1.5"
-                />
                 <input
                   placeholder="WhatsApp Phone Number ID"
                   value={settings.whatsapp_phone_number_id || ""}
@@ -1613,7 +1542,6 @@ export default function AdminPortal() {
               <input placeholder="Student Phone" value={studentForm.student_phone} onChange={(e) => setStudentForm({ ...studentForm, student_phone: e.target.value })} className="rounded-lg border px-3 py-2" />
               <input required placeholder="Parent Name" value={studentForm.parent_name} onChange={(e) => setStudentForm({ ...studentForm, parent_name: e.target.value })} className="rounded-lg border px-3 py-2" />
               <input required placeholder="Parent Phone" value={studentForm.parent_phone} onChange={(e) => setStudentForm({ ...studentForm, parent_phone: e.target.value })} className="rounded-lg border px-3 py-2" />
-              <input type="number" placeholder="Total Annual Fees (optional)" value={studentForm.total_fees} onChange={(e) => setStudentForm({ ...studentForm, total_fees: e.target.value })} className="rounded-lg border px-3 py-2" />
               <select value={studentForm.assigned_teacher_id || ""} onChange={(e) => setStudentForm({ ...studentForm, assigned_teacher_id: e.target.value })} className="rounded-lg border px-3 py-2">
                 <option value="">Assign Teacher (optional)</option>
                 {teachers.map((t) => <option key={t.id} value={t.id}>{t.teacher_name}</option>)}
@@ -1630,34 +1558,6 @@ export default function AdminPortal() {
                 <button type="submit" className="px-5 py-2 rounded-lg bg-navy-900 text-white font-semibold">
                   {editingStudent ? "Save Changes" : "Create Student"}
                 </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* RECORD PAYMENT MODAL */}
-      {paymentModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="font-bold text-navy-900">Record Fee Payment — {paymentModal.student_name}</h3>
-              <button onClick={() => setPaymentModal(null)}><X className="w-5 h-5" /></button>
-            </div>
-            <p className="text-xs text-slate-500 mb-3">Pending Balance: ₹{paymentModal.pending_amount.toLocaleString("en-IN")}</p>
-            <form onSubmit={handleRecordPayment} className="space-y-3 text-sm">
-              <input type="number" step="0.01" required placeholder="Amount (₹)" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} className="w-full rounded-lg border px-3 py-2" />
-              <select value={paymentForm.payment_mode} onChange={(e) => setPaymentForm({ ...paymentForm, payment_mode: e.target.value })} className="w-full rounded-lg border px-3 py-2">
-                <option value="CASH">Cash</option>
-                <option value="UPI">UPI</option>
-                <option value="BANK_TRANSFER">Bank Transfer</option>
-                <option value="OTHER">Other</option>
-              </select>
-              <input placeholder="Transaction Reference Number (prevents duplicates)" value={paymentForm.reference_number} onChange={(e) => setPaymentForm({ ...paymentForm, reference_number: e.target.value })} className="w-full rounded-lg border px-3 py-2" />
-              <input placeholder="Remarks" value={paymentForm.remarks} onChange={(e) => setPaymentForm({ ...paymentForm, remarks: e.target.value })} className="w-full rounded-lg border px-3 py-2" />
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setPaymentModal(null)} className="px-4 py-2 rounded-lg border">Cancel</button>
-                <button type="submit" className="px-5 py-2 rounded-lg bg-emerald-700 text-white font-semibold">Save & Issue Receipt</button>
               </div>
             </form>
           </div>

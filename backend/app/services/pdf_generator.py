@@ -3,6 +3,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
 
+from reportlab.graphics import renderPDF
+from reportlab.graphics.barcode.qr import QrCodeWidget
+from reportlab.graphics.shapes import Drawing
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
@@ -95,6 +98,7 @@ def generate_marks_card_pdf(
     teacher_remarks: str,
     class_rank: Optional[int] = None,
     class_total_students: Optional[int] = None,
+    examination_id: Optional[int] = None,
 ) -> bytes:
     buf = io.BytesIO()
     width, height = A4
@@ -244,6 +248,25 @@ def generate_marks_card_pdf(
     c.setFillColor(MUTED)
     c.setFont("Helvetica", 8)
     c.drawString(24 * mm, footer_y - 4 * mm, f"Issued via AKTP PORTAL on {datetime.now().strftime('%d %b %Y')}")
+
+    # Scannable Verification QR Code (center footer)
+    qr_url = f"https://aktp-portal.netlify.app/verify?code={student_code}&exam={examination_id or ''}&pct={percentage:.1f}"
+    qr_widget = QrCodeWidget(qr_url)
+    bounds = qr_widget.getBounds()
+    qr_size = 22 * mm
+    qr_w = bounds[2] - bounds[0]
+    qr_h = bounds[3] - bounds[1]
+    d = Drawing(qr_size, qr_size, transform=[qr_size / qr_w, 0, 0, qr_size / qr_h, 0, 0])
+    d.add(qr_widget)
+    qr_x = (width - qr_size) / 2
+    qr_y = footer_y + 4 * mm
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(0.8)
+    c.roundRect(qr_x - 2 * mm, qr_y - 2 * mm, qr_size + 4 * mm, qr_size + 4 * mm, 3, fill=0, stroke=1)
+    renderPDF.draw(d, c, qr_x, qr_y)
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 6.5)
+    c.drawCentredString(width / 2, footer_y - 1.5 * mm, "SCAN QR TO VERIFY")
 
     # Director signature block (never fabricate signature)
     sig_x = width - 78 * mm

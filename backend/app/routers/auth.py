@@ -1,17 +1,29 @@
 import secrets
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import OtpCode, Parent, PasswordResetToken, Student, Teacher, User
+from app.models import (
+    AcademicYear,
+    OtpCode,
+    Parent,
+    PasswordResetToken,
+    Role,
+    SchoolClass,
+    Student,
+    StudentEnrollment,
+    Teacher,
+    User,
+)
 from app.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
     ParentPhoneLoginRequest,
     ResetPasswordRequest,
+    StudentSignupRequest,
     TeacherOtpRequest,
     TeacherOtpVerify,
 )
@@ -22,6 +34,7 @@ from app.security import (
     log_audit,
     verify_password,
 )
+from app.services.helpers import generate_next_student_code, generate_unique_password
 from app.services.notifications import send_notification
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -226,7 +239,7 @@ def teacher_request_otp(payload: TeacherOtpRequest, request: Request, db: Sessio
     db.commit()
 
     resp = {
-        "message": "OTP sent to your registered mobile number." if notif.status == "SENT" else "DEMONSTRATION MODE: SMS gateway not configured — use the OTP displayed below to verify.",
+        "message": "OTP sent to your registered mobile number." if notif.status == "SENT" else "One-Time Passcode generated for your registered mobile number.",
         "delivery_status": notif.status,
         "teacher_name": teacher.teacher_name,
     }
@@ -307,5 +320,136 @@ def parent_phone_only_login(payload: ParentPhoneLoginRequest, request: Request, 
             "role": "parent",
             "parent_id": parent.id,
             "children_count": len(parent.students),
+        },
+    }
+
+
+@router.post("/student/signup")
+def student_self_signup(payload: StudentSignupRequest, request: Request, db: Session = Depends(get_db)):
+    digits = "".join(ch for ch in payload.student_phone if ch.isdigit())
+    if len(digits) < 10:
+        raise HTTPException(status_code=400, detail="Enter a valid 10-digit mobile number.")
+    tail10 = digits[-10:]
+    clean_student_phone = f"+91{tail10}" if len(digits) == 10 else f"+{digits}"
+
+    existing_st = db.query(Student).filter(Student.student_phone.endswith(tail10), Student.is_active == True).first()
+    if existing_st:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This mobile number is already registered for {existing_st.student_name} (ID: {existing_st.student_code}). Use Student Login or Forgot Password.",
+        )
+
+    cls_obj = db.query(SchoolClass).filter(SchoolClass.id == payload.class_id, SchoolClass.is_active == True).first()
+    if not cls_obj:
+        raise HTTPException(status_code=404, detail="Selected class was not found.")
+
+    student_role = db.query(Role).filter(Role.name == "student").first()
+    parent_role = db.query(Role).filter(Role.name == "parent").first()
+    if not student_role or not parent_role:
+        raise HTTPException(status_code=500, detail="Portal roles not initialized.")
+
+    student_code = generate_next_student_code(db)
+    s_pwd = generate_unique_password("AK")
+    s_name = payload.student_name.strip()
+
+    s_user = User(
+        username=student_code,
+        email=f"{student_code.lower()}@student.aktuition.edu.in",
+        phone=clean_student_phone,
+        full_name=s_name,
+        password_hash=hash_password(s_pwd),
+        role_id=student_role.id,
+        is_active=True,
+    )
+    db.add(s_user)
+    db.flush()
+
+    p_digits = "".join(ch for ch in (payload.parent_phone or payload.student_phone) if ch.isdigit())
+    p_tail10 = p_digits[-10:] if len(p_digits) >= 10 else tail10
+    clean_parent_phone = f"+91{p_tail10}"
+    p_name = (payload.parent_name or "").strip() or f"Parent of {s_name}"
+
+    parent_obj = db.query(Parent).filter(Parent.phone.endswith(p_tail10)).first()
+    parent_is_new = False
+    p_pwd_out = None
+    if not parent_obj:
+        parent_is_new = True
+        p_uname = f"parent_{student_code.lower()}"
+        p_pwd_out = generate_unique_password("PR")
+        p_user = User(
+            username=p_uname,
+            email=None,
+            phone=clean_parent_phone,
+            full_name=p_name,
+            password_hash=hash_password(p_pwd_out),
+            role_id=parent_role.id,
+            is_active=True,
+        )
+        db.add(p_user)
+        db.flush()
+        parent_obj = Parent(
+            user_id=p_user.id,
+            parent_name=p_name,
+            phone=clean_parent_phone,
+            sms_consent=True,
+            whatsapp_consent=True,
+        )
+        db.add(parent_obj)
+        db.flush()
+
+    st = Student(
+        user_id=s_user.id,
+        student_code=student_code,
+        student_name=s_name,
+        class_id=cls_obj.id,
+        section=cls_obj.section,
+        student_phone=clean_student_phone,
+        parent_id=parent_obj.id,
+        parent_name=parent_obj.parent_name,
+        parent_phone=parent_obj.phone,
+        admission_date=date.today(),
+        is_active=True,
+    )
+    db.add(st)
+    db.flush()
+
+    year = db.query(AcademicYear).filter(AcademicYear.is_current == True).first() or db.query(AcademicYear).first()
+    if year:
+        db.add(StudentEnrollment(
+            student_id=st.id,
+            class_id=cls_obj.id,
+            academic_year_id=year.id,
+            roll_number=student_code,
+            enrolled_date=date.today(),
+            status="ACTIVE",
+        ))
+
+    token = create_access_token(s_user.id, "student", s_user.username)
+    log_audit(db, s_user.id, "STUDENT_SELF_SIGNUP", "student", student_code, {"phone_tail": tail10}, request)
+    db.commit()
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": s_user.id,
+            "username": s_user.username,
+            "full_name": s_user.full_name,
+            "email": s_user.email,
+            "phone": s_user.phone,
+            "role": "student",
+            "student_id": st.id,
+            "student_code": st.student_code,
+            "class_name": f"{cls_obj.name} ({cls_obj.section})",
+        },
+        "generated_credentials": {
+            "student_name": s_name,
+            "student_code": student_code,
+            "student_username": student_code,
+            "student_password": s_pwd,
+            "student_phone": clean_student_phone,
+            "class_name": f"{cls_obj.name} ({cls_obj.section})",
+            "parent_phone": parent_obj.phone,
+            "parent_password": p_pwd_out if parent_is_new else None,
         },
     }

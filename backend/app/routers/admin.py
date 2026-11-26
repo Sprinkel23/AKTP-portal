@@ -67,7 +67,7 @@ from app.services.helpers import (
     generate_unique_password,
     get_or_create_settings,
 )
-from app.services.notifications import send_notification
+from app.services.notifications import build_direct_links, send_notification
 from app.services.pdf_generator import (
     generate_branded_table_pdf,
     generate_fee_receipt_pdf,
@@ -1173,10 +1173,11 @@ def review_result_approval(
             m.status = "PUBLISHED"
 
         notified = []
+        dispatches = []
         if payload.send_notifications:
             template = (settings.notification_templates or {}).get(
                 "RESULT",
-                "Dear Parent, your child {student_name} has received {marks_obtained}/{max_marks} in {exam_name} – {subject_name}. Percentage: {percentage}%. The official result is now published. Please log in to the AK Tuition Parent Portal to download the marks card. – AK Tuition",
+                "Dear Parent, your child {student_name} has received {marks_obtained}/{max_marks} in {exam_name} – {subject_name}. Percentage: {percentage}%. The official result is now published. Please log in to the AK Tuition Portal to download the verified QR Marks Card. – AK Tuition",
             )
             exam_name = ap.examination.name if ap.examination else "Examination"
             subj_name = ap.examination_subject.subject.name if ap.examination_subject and ap.examination_subject.subject else "Subject"
@@ -1193,35 +1194,61 @@ def review_result_approval(
                     subject_name=subj_name,
                     percentage=pct,
                 )
-                for ch in ("SMS", "WHATSAPP"):
-                    n = send_notification(
-                        db,
-                        recipient_phone=st.parent_phone,
-                        channel=ch,
-                        notification_type="RESULT",
-                        message=msg,
-                        dedup_key=f"RESULT_{ap.id}_{m.id}_{ch}",
-                        recipient_user_id=st.parent.user_id if st.parent else None,
-                        student_id=st.id,
-                        parent_id=st.parent_id,
-                    )
-                    notified.append({"student": st.student_code, "target": "parent", "channel": ch, "status": n.status})
+                n_wa = send_notification(
+                    db,
+                    recipient_phone=st.parent_phone,
+                    channel="WHATSAPP",
+                    notification_type="RESULT",
+                    message=msg,
+                    dedup_key=f"RESULT_{ap.id}_{m.id}_WHATSAPP",
+                    recipient_user_id=st.parent.user_id if st.parent else None,
+                    student_id=st.id,
+                    parent_id=st.parent_id,
+                )
+                notified.append({"student": st.student_code, "target": "parent", "channel": "WHATSAPP", "status": n_wa.status})
+                p_links = build_direct_links(st.parent_phone, msg)
+                dispatches.append({
+                    "student_code": st.student_code,
+                    "student_name": st.student_name,
+                    "target": "parent",
+                    "phone": st.parent_phone,
+                    "status": n_wa.status,
+                    "message": msg,
+                    "whatsapp_url": p_links["whatsapp_url"],
+                    "sms_url": p_links["sms_url"],
+                })
                 if st.student_phone and st.student_phone.strip() != st.parent_phone.strip():
                     ns = send_notification(
                         db,
                         recipient_phone=st.student_phone.strip(),
-                        channel="SMS",
+                        channel="WHATSAPP",
                         notification_type="RESULT",
                         message=msg,
-                        dedup_key=f"RESULT_{ap.id}_{m.id}_STUDENT_SMS",
+                        dedup_key=f"RESULT_{ap.id}_{m.id}_STUDENT_WHATSAPP",
                         recipient_user_id=st.user_id,
                         student_id=st.id,
                     )
-                    notified.append({"student": st.student_code, "target": "student", "channel": "SMS", "status": ns.status})
+                    notified.append({"student": st.student_code, "target": "student", "channel": "WHATSAPP", "status": ns.status})
+                    s_links = build_direct_links(st.student_phone.strip(), msg)
+                    dispatches.append({
+                        "student_code": st.student_code,
+                        "student_name": st.student_name,
+                        "target": "student",
+                        "phone": st.student_phone.strip(),
+                        "status": ns.status,
+                        "message": msg,
+                        "whatsapp_url": s_links["whatsapp_url"],
+                        "sms_url": s_links["sms_url"],
+                    })
 
         log_audit(db, current_user.id, "APPROVE_PUBLISH_RESULT", "result_approval", str(ap.id), {"exam_subject_id": ap.examination_subject_id}, request)
         db.commit()
-        return {"status": "PUBLISHED", "message": "Results approved and published.", "notifications": notified}
+        return {
+            "status": "PUBLISHED",
+            "message": "Results approved and published! WhatsApp & SMS alerts prepared/dispatched for registered numbers.",
+            "notifications": notified,
+            "dispatches": dispatches,
+        }
 
     elif action == "REJECT":
         if not payload.rejection_reason or not payload.rejection_reason.strip():
@@ -1312,6 +1339,7 @@ def list_notifications(db: Session = Depends(get_db)):
                 "provider_message_id": n.provider_message_id,
                 "error_detail": n.error_detail,
                 "created_at": n.created_at.isoformat(),
+                **build_direct_links(n.recipient_phone, n.message),
             }
             for n in items
         ],
@@ -1431,6 +1459,7 @@ def generate_report(
             teacher_remarks=remark,
             class_rank=rank,
             class_total_students=class_tot,
+            examination_id=ex.id,
         )
         return Response(
             content=pdf_bytes,

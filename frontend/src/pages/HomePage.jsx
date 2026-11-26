@@ -297,7 +297,7 @@ export default function HomePage() {
                 { title: "Learn with Clarity", desc: "Concept-first explanations tailored to every student's pace." },
                 { title: "Practise Consistently", desc: "Topic-wise worksheets, question banks, and timed online tests." },
                 { title: "Achieve Excellence", desc: "Regular evaluations, official marks cards, and remedial coaching." },
-                { title: "Transparent Parent Connect", desc: "Real-time attendance alerts, fee receipts, and published results." },
+                { title: "Transparent Parent Connect", desc: "Real-time attendance alerts, marks cards, and published results." },
               ].map((item) => (
                 <div key={item.title} className="flex items-start gap-3 p-4 rounded-2xl bg-blue-50/70 border border-blue-100">
                   <CheckCircle2 className="w-5 h-5 text-royal-600 shrink-0 mt-0.5" />
@@ -423,7 +423,7 @@ export default function HomePage() {
               { icon: Users, stat: "15:1 Ratio", title: "Small Focused Batches", desc: "Individual attention for every learner." },
               { icon: ClipboardList, stat: "Weekly Tests", title: "Practice & Evaluation", desc: "Online MCQs & structured descriptive papers." },
               { icon: Award, stat: "Official Marks Cards", title: "Verified Results", desc: "Director-approved marks cards & PDF downloads." },
-              { icon: GraduationCap, stat: "100% Transparency", title: "Parent Portal & Alerts", desc: "Attendance tracking, fees & instant updates." },
+              { icon: GraduationCap, stat: "100% Transparency", title: "Parent Portal & Alerts", desc: "Attendance tracking, marks cards & instant updates." },
             ].map((w) => {
               const Icon = w.icon;
               return (

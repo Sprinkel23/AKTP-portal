@@ -1,12 +1,14 @@
 from datetime import date
-from fastapi import APIRouter, Depends, Request
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Announcement, Examination, SchoolClass, Student, Subject, Teacher
+from app.models import Announcement, Examination, Mark, SchoolClass, Student, Subject, Teacher
 from app.schemas import ContactInquiryRequest
 from app.security import log_audit
-from app.services.helpers import get_or_create_settings
+from app.services.helpers import compute_class_rank, compute_grade, get_or_create_settings
 
 router = APIRouter(prefix="/api/public", tags=["Public"])
 
@@ -118,4 +120,63 @@ def submit_contact_inquiry(payload: ContactInquiryRequest, request: Request, db:
     return {
         "status": "received",
         "message": "Thank you for contacting AK Tuition! Our admissions coordinator will reach out shortly.",
+    }
+
+
+@router.get("/classes")
+def get_public_classes(db: Session = Depends(get_db)):
+    classes = db.query(SchoolClass).filter(SchoolClass.is_active == True).order_by(SchoolClass.grade_level.asc(), SchoolClass.section.asc()).all()
+    return [
+        {"id": c.id, "grade_level": c.grade_level, "name": c.name, "section": c.section}
+        for c in classes
+    ]
+
+
+@router.get("/verify-markscard")
+def verify_markscard(code: str, exam: Optional[int] = None, db: Session = Depends(get_db)):
+    st = db.query(Student).filter(func.lower(Student.student_code) == code.strip().lower()).first()
+    if not st:
+        raise HTTPException(status_code=404, detail="Student record not found for verification.")
+    q = db.query(Mark).filter(Mark.student_id == st.id, Mark.status == "PUBLISHED")
+    if exam:
+        q = q.filter(Mark.examination_id == exam)
+    marks = q.order_by(Mark.examination_id.desc(), Mark.id.asc()).all()
+    if not marks:
+        raise HTTPException(status_code=404, detail="No published examination marks found for this QR code.")
+    target_exam_id = exam or marks[0].examination_id
+    marks = [m for m in marks if m.examination_id == target_exam_id]
+    ex = db.query(Examination).filter(Examination.id == target_exam_id).first()
+    settings = get_or_create_settings(db)
+    total_max = sum(float(m.max_marks) for m in marks)
+    total_obt = sum(float(m.marks_obtained) for m in marks)
+    pct = round((total_obt / total_max) * 100, 2) if total_max else 0.0
+    grade, remark = compute_grade(pct, settings.grading_rules)
+    rank, class_tot = compute_class_rank(db, target_exam_id, st.class_id, st.id)
+    return {
+        "verified": True,
+        "tuition_name": settings.tuition_name,
+        "director_name": settings.director_name,
+        "student_code": st.student_code,
+        "student_name": st.student_name,
+        "class_name": st.school_class.name if st.school_class else "",
+        "section": st.section,
+        "examination_id": target_exam_id,
+        "examination_name": ex.name if ex else "",
+        "total_max": total_max,
+        "total_obtained": total_obt,
+        "percentage": pct,
+        "overall_grade": grade,
+        "result_status": "PASS" if pct >= 35 else "FAIL",
+        "class_rank": rank,
+        "class_total_students": class_tot,
+        "teacher_remarks": remark,
+        "subjects": [
+            {
+                "subject": m.subject.name if m.subject else "",
+                "max_marks": float(m.max_marks),
+                "marks_obtained": float(m.marks_obtained),
+                "grade": m.grade,
+            }
+            for m in marks
+        ],
     }

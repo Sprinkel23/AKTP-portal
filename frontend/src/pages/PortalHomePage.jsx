@@ -20,6 +20,16 @@ export default function PortalHomePage() {
 
   const [studentId, setStudentId] = useState("");
   const [studentPassword, setStudentPassword] = useState("");
+  const [studentMode, setStudentMode] = useState("login"); // login | signup
+  const [publicClasses, setPublicClasses] = useState([]);
+  const [signupForm, setSignupForm] = useState({
+    student_name: "",
+    class_id: "",
+    student_phone: "",
+    parent_name: "",
+    parent_phone: "",
+  });
+  const [signupCreds, setSignupCreds] = useState(null);
 
   const [parentPhoneOrUser, setParentPhoneOrUser] = useState("");
 
@@ -48,6 +58,19 @@ export default function PortalHomePage() {
       setActiveTab(role.toLowerCase());
     }
   }, [role]);
+
+  useEffect(() => {
+    api
+      .get("/api/public/classes")
+      .then((res) => {
+        const list = res.data || [];
+        setPublicClasses(list);
+        if (list.length) {
+          setSignupForm((prev) => (prev.class_id ? prev : { ...prev, class_id: String(list[0].id) }));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (user?.role) {
@@ -262,65 +285,230 @@ export default function PortalHomePage() {
 
             {/* 1. STUDENT PORTAL TAB */}
             {!resetMode && activeTab === "student" && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  doLogin(studentId, studentPassword, "student");
-                }}
-                className="space-y-5"
-              >
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-900">Student Login</h2>
-                  <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                    Enter the Student ID and password registered by your teacher to view academic progress, attendance, marks cards and available quizzes.
-                  </p>
-                </div>
-
-                <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      Student ID / Roll Number
-                    </label>
-                    <input
-                      required
-                      value={studentId}
-                      onChange={(e) => setStudentId(e.target.value)}
-                      placeholder="Enter Student ID (e.g. AK001)"
-                      className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-[#0b1366] focus:ring-2 focus:ring-[#0b1366]/10"
-                    />
+                    <h2 className="text-2xl font-bold text-slate-900">
+                      {studentMode === "login" ? "Student Login" : "Student Quick Sign Up"}
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-500 mt-1">
+                      {studentMode === "login"
+                        ? "Enter your Student ID and password to view marks cards, QR verification, attendance, and quizzes."
+                        : "Sign up with your name, class, and mobile number — your Student ID and unique login password will be created automatically."}
+                    </p>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                      Password
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={studentPassword}
-                      onChange={(e) => setStudentPassword(e.target.value)}
-                      placeholder="Enter your password"
-                      className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-[#0b1366] focus:ring-2 focus:ring-[#0b1366]/10"
-                    />
+                  <div className="inline-flex rounded-lg border border-slate-200 p-1 bg-slate-50 text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStudentMode("login");
+                        setError("");
+                        setInfoMsg("");
+                      }}
+                      className={`px-3 py-1.5 rounded-md transition ${
+                        studentMode === "login" ? "bg-[#0b1366] text-white" : "text-slate-600"
+                      }`}
+                    >
+                      Student Login
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStudentMode("signup");
+                        setError("");
+                        setInfoMsg("");
+                      }}
+                      className={`px-3 py-1.5 rounded-md transition ${
+                        studentMode === "signup" ? "bg-[#0b1366] text-white" : "text-slate-600"
+                      }`}
+                    >
+                      New Student Sign Up
+                    </button>
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-full py-3 rounded-lg bg-[#0b1366] hover:bg-[#14208c] text-white font-semibold text-sm transition disabled:opacity-60"
-                >
-                  {submitting ? "Signing in..." : "Login to Student Portal"}
-                </button>
+                {signupCreds && (
+                  <div className="p-5 rounded-xl bg-emerald-50 border-2 border-emerald-500 space-y-3">
+                    <div className="font-bold text-emerald-900 text-sm">
+                      Automatic Student Login Credentials Created!
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-2 text-xs text-slate-800">
+                      <div>Student Name: <strong>{signupCreds.creds.student_name}</strong></div>
+                      <div>Class: <strong>{signupCreds.creds.class_name}</strong></div>
+                      <div>Student ID / Username: <strong className="font-mono text-sm text-[#0b1366]">{signupCreds.creds.student_username}</strong></div>
+                      <div>Auto Password: <strong className="font-mono text-sm text-emerald-700">{signupCreds.creds.student_password}</strong></div>
+                      <div>Registered Mobile: <strong className="font-mono">{signupCreds.creds.student_phone}</strong></div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const txt = `AK TUITION STUDENT LOGIN\nName: ${signupCreds.creds.student_name}\nClass: ${signupCreds.creds.class_name}\nStudent ID: ${signupCreds.creds.student_username}\nPassword: ${signupCreds.creds.student_password}\nPortal: https://aktp-portal.netlify.app`;
+                          navigator.clipboard?.writeText(txt);
+                          setInfoMsg("Credentials copied! Save them before entering the portal.");
+                        }}
+                        className="px-4 py-2 rounded-lg border border-emerald-700 text-emerald-900 text-xs font-bold bg-white"
+                      >
+                        Copy Login Details
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          loginSuccess(signupCreds.access_token, signupCreds.user);
+                          navigate(`/${signupCreds.user.role}`, { replace: true });
+                        }}
+                        className="px-5 py-2 rounded-lg bg-[#0b1366] text-white text-xs font-bold"
+                      >
+                        Continue to Student Portal →
+                      </button>
+                    </div>
+                  </div>
+                )}
 
-                <div className="flex justify-between items-center text-xs text-slate-500">
-                  <button type="button" onClick={() => setResetMode("forgot")} className="text-[#0b1366] hover:underline font-medium">
-                    Forgot Password?
-                  </button>
-                  <Link to="/website" className="sm:hidden text-[#0b1366] hover:underline font-medium">
-                    About AK Tuition
-                  </Link>
-                </div>
-              </form>
+                {studentMode === "login" ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      doLogin(studentId, studentPassword, "student");
+                    }}
+                    className="space-y-5"
+                  >
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          Student ID / Roll Number
+                        </label>
+                        <input
+                          required
+                          value={studentId}
+                          onChange={(e) => setStudentId(e.target.value)}
+                          placeholder="Enter Student ID (e.g. AK001)"
+                          className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-[#0b1366] focus:ring-2 focus:ring-[#0b1366]/10"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          Password
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          value={studentPassword}
+                          onChange={(e) => setStudentPassword(e.target.value)}
+                          placeholder="Enter your password"
+                          className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-[#0b1366] focus:ring-2 focus:ring-[#0b1366]/10"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      className="w-full py-3 rounded-lg bg-[#0b1366] hover:bg-[#14208c] text-white font-semibold text-sm transition disabled:opacity-60"
+                    >
+                      {submitting ? "Signing in..." : "Login to Student Portal"}
+                    </button>
+
+                    <div className="flex justify-between items-center text-xs text-slate-500">
+                      <button type="button" onClick={() => setResetMode("forgot")} className="text-[#0b1366] hover:underline font-medium">
+                        Forgot Password?
+                      </button>
+                      <Link to="/website" className="sm:hidden text-[#0b1366] hover:underline font-medium">
+                        About AK Tuition
+                      </Link>
+                    </div>
+                  </form>
+                ) : (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setError("");
+                      setInfoMsg("");
+                      setSubmitting(true);
+                      try {
+                        const res = await api.post("/api/auth/student/signup", {
+                          student_name: signupForm.student_name.trim(),
+                          class_id: Number(signupForm.class_id),
+                          student_phone: signupForm.student_phone.trim(),
+                          parent_name: signupForm.parent_name.trim() || null,
+                          parent_phone: signupForm.parent_phone.trim() || null,
+                        });
+                        setSignupCreds({
+                          access_token: res.data.access_token,
+                          user: res.data.user,
+                          creds: res.data.generated_credentials,
+                        });
+                      } catch (err) {
+                        setError(formatAuthError(err, "Unable to complete sign up."));
+                      } finally {
+                        setSubmitting(false);
+                      }
+                    }}
+                    className="space-y-4"
+                  >
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          Student Full Name *
+                        </label>
+                        <input
+                          required
+                          value={signupForm.student_name}
+                          onChange={(e) => setSignupForm({ ...signupForm, student_name: e.target.value })}
+                          placeholder="Enter your full name"
+                          className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-[#0b1366]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          Select Class *
+                        </label>
+                        <select
+                          required
+                          value={signupForm.class_id}
+                          onChange={(e) => setSignupForm({ ...signupForm, class_id: e.target.value })}
+                          className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-[#0b1366]"
+                        >
+                          <option value="">Choose Class</option>
+                          {publicClasses.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name} ({c.section})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          Your Mobile Number *
+                        </label>
+                        <input
+                          required
+                          value={signupForm.student_phone}
+                          onChange={(e) => setSignupForm({ ...signupForm, student_phone: e.target.value })}
+                          placeholder="Enter 10-digit mobile number"
+                          className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-[#0b1366]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          Parent Phone Number (optional)
+                        </label>
+                        <input
+                          value={signupForm.parent_phone}
+                          onChange={(e) => setSignupForm({ ...signupForm, parent_phone: e.target.value })}
+                          placeholder="Same as your number if blank"
+                          className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-[#0b1366]"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      className="w-full py-3 rounded-lg bg-[#0b1366] hover:bg-[#14208c] text-white font-semibold text-sm transition disabled:opacity-60"
+                    >
+                      {submitting ? "Creating Student ID..." : "Sign Up & Generate Login Credentials"}
+                    </button>
+                  </form>
+                )}
+              </div>
             )}
 
             {/* 2. PARENT / GUARDIAN PORTAL TAB */}
@@ -594,7 +782,7 @@ export default function PortalHomePage() {
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Administrator Portal</h2>
                   <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                    Full system control: student admissions, teachers, fees, exam timetables, official result approvals and reports.
+                    Full system control: student admissions, teachers, exam timetables, official result approvals and academic reports.
                   </p>
                 </div>
 

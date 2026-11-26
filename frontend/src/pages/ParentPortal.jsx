@@ -40,7 +40,6 @@ export default function ParentPortal() {
     { id: "attendance", label: "Attendance & Absent Dates", icon: ClipboardCheck },
     { id: "exams", label: "Exam Timetables", icon: Calendar },
     { id: "results", label: "Published Results", icon: Award },
-    { id: "fees", label: "Fees & Receipts", icon: IndianRupee },
     { id: "notifications", label: "Notifications & Consent", icon: Bell },
   ];
 
@@ -92,18 +91,14 @@ export default function ParentPortal() {
                 <h2 className="text-2xl font-bold">{child.student_name}</h2>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-4 text-center">
+            <div className="grid grid-cols-2 gap-4 text-center">
               <div className="bg-white/10 rounded-xl px-4 py-2">
                 <div className="text-xs text-blue-200">Attendance</div>
                 <div className="text-xl font-extrabold text-gold-300">{data.attendance.attendance_percentage}%</div>
               </div>
               <div className="bg-white/10 rounded-xl px-4 py-2">
-                <div className="text-xs text-blue-200">Paid Fees</div>
-                <div className="text-xl font-extrabold text-emerald-300">₹{data.fees.paid_amount.toLocaleString("en-IN")}</div>
-              </div>
-              <div className="bg-white/10 rounded-xl px-4 py-2">
-                <div className="text-xs text-blue-200">Pending Fees</div>
-                <div className="text-xl font-extrabold text-amber-300">₹{data.fees.pending_amount.toLocaleString("en-IN")}</div>
+                <div className="text-xs text-blue-200">Published Results</div>
+                <div className="text-xl font-extrabold text-emerald-300">{data.published_results?.length || 0}</div>
               </div>
             </div>
           </div>
@@ -264,66 +259,13 @@ export default function ParentPortal() {
         </div>
       )}
 
-      {/* FEES & RECEIPTS (READ-ONLY) */}
-      {tab === "fees" && data && child && (
-        <div className="space-y-6">
-          <div className="grid sm:grid-cols-3 gap-4">
-            <div className="bg-white rounded-2xl p-4 border-l-4 border-navy-900">
-              <div className="text-xs text-slate-500 uppercase font-semibold">Total Fees</div>
-              <div className="text-2xl font-extrabold text-navy-900 mt-1">₹{data.fees.total_fees.toLocaleString("en-IN")}</div>
-            </div>
-            <div className="bg-white rounded-2xl p-4 border-l-4 border-emerald-600">
-              <div className="text-xs text-slate-500 uppercase font-semibold">Paid Fees</div>
-              <div className="text-2xl font-extrabold text-emerald-700 mt-1">₹{data.fees.paid_amount.toLocaleString("en-IN")}</div>
-            </div>
-            <div className="bg-white rounded-2xl p-4 border-l-4 border-amber-500">
-              <div className="text-xs text-slate-500 uppercase font-semibold">Pending Fees</div>
-              <div className="text-2xl font-extrabold text-amber-700 mt-1">₹{data.fees.pending_amount.toLocaleString("en-IN")}</div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
-            <div className="p-4 border-b font-bold text-navy-900">Payment History</div>
-            <table className="w-full text-sm">
-              <thead className="bg-slate-100 text-xs uppercase">
-                <tr>
-                  <th className="p-3 text-left">Receipt No</th>
-                  <th className="p-3 text-left">Date</th>
-                  <th className="p-3 text-left">Mode</th>
-                  <th className="p-3 text-right">Amount</th>
-                  <th className="p-3 text-right">Receipt</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {data.fees.payments.map((pay) => (
-                  <tr key={pay.id}>
-                    <td className="p-3 font-mono font-bold">{pay.receipt_number}</td>
-                    <td className="p-3">{pay.payment_date}</td>
-                    <td className="p-3">{pay.payment_mode}</td>
-                    <td className="p-3 text-right font-bold">₹{pay.amount.toLocaleString("en-IN")}</td>
-                    <td className="p-3 text-right">
-                      <button
-                        onClick={() => downloadAuthorizedFile(`/api/parent/children/${child.id}/payments/${pay.id}/receipt-pdf`, `AK_Receipt_${pay.receipt_number}.pdf`)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-blue-50 text-royal-700 text-xs font-semibold"
-                      >
-                        <Download className="w-3.5 h-3.5" /> PDF
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {/* NOTIFICATIONS & CONSENT */}
       {tab === "notifications" && data && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl p-5 shadow-sm border flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h3 className="font-bold text-navy-900">SMS & WhatsApp Notification Preferences</h3>
-              <p className="text-xs text-slate-500">Manage consent for examination, result, attendance, and fee alerts.</p>
+              <h3 className="font-bold text-navy-900">WhatsApp &amp; SMS Notification Preferences</h3>
+              <p className="text-xs text-slate-500">Manage consent for examination, result, and attendance alerts.</p>
             </div>
             <div className="flex gap-4 text-sm">
               <label className="inline-flex items-center gap-2 font-medium">
