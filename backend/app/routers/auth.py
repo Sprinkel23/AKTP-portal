@@ -35,7 +35,7 @@ from app.security import (
     verify_password,
 )
 from app.services.helpers import generate_next_student_code, generate_unique_password
-from app.services.notifications import send_notification
+from app.services.notifications import dispatch_group_workflow_event, send_notification
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -425,6 +425,28 @@ def student_self_signup(payload: StudentSignupRequest, request: Request, db: Ses
         ))
 
     token = create_access_token(s_user.id, "student", s_user.username)
+    welcome_msg = (
+        f"Welcome to AK Tuition! {s_name} ({student_code}) enrolled in {cls_obj.name} ({cls_obj.section}). "
+        f"Student Login ID: {student_code}, Password: {s_pwd}."
+    )
+    send_notification(
+        db,
+        recipient_phone=clean_student_phone,
+        channel="WHATSAPP",
+        notification_type="WELCOME_CREDENTIAL",
+        message=welcome_msg,
+        dedup_key=f"SIGNUP_{student_code}",
+        recipient_user_id=s_user.id,
+        student_id=st.id,
+        parent_id=parent_obj.id,
+    )
+    dispatch_group_workflow_event(
+        db,
+        event_type="STUDENT_SIGNUP",
+        title="New Student Self-Signup",
+        message=f"{s_name} ({student_code}) joined {cls_obj.name} ({cls_obj.section}).",
+        entity_id=student_code,
+    )
     log_audit(db, s_user.id, "STUDENT_SELF_SIGNUP", "student", student_code, {"phone_tail": tail10}, request)
     db.commit()
 

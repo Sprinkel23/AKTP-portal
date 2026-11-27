@@ -2,6 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import func
@@ -36,6 +37,7 @@ from app.schemas import (
     AttendanceBulkCreate,
     MarksBulkEntry,
     QuestionPaperCreate,
+    TeacherAllSubjectsMarksEntry,
     TeacherDirectMarksEntry,
     TeacherStudentCreate,
 )
@@ -47,7 +49,12 @@ from app.services.helpers import (
     generate_unique_password,
     get_or_create_settings,
 )
-from app.services.notifications import build_direct_links, send_notification
+from app.services.notifications import (
+    build_direct_links,
+    dispatch_group_workflow_event,
+    gateway_status_summary,
+    send_notification,
+)
 from app.services.pdf_generator import generate_branded_table_pdf, generate_question_paper_pdf
 
 router = APIRouter(
@@ -319,6 +326,24 @@ def teacher_add_student(
             pending_amount=float(cls_obj.tuition_fee),
         ))
 
+    send_notification(
+        db,
+        recipient_phone=parent_obj.phone,
+        channel="WHATSAPP",
+        notification_type="WELCOME_CREDENTIAL",
+        message=f"Welcome to AK Tuition! {student.student_name} ({student_code}) enrolled in {cls_obj.name} ({student.section}). Login ID: {student_code}, Password: {s_pwd}.",
+        dedup_key=f"TEACHER_ADD_{student_code}",
+        recipient_user_id=parent_obj.user_id,
+        student_id=student.id,
+        parent_id=parent_obj.id,
+    )
+    dispatch_group_workflow_event(
+        db,
+        event_type="STUDENT_REGISTERED",
+        title="New Student Added by Teacher",
+        message=f"{t.teacher_name} enrolled {student.student_name} ({student_code}) in {cls_obj.name} ({student.section}).",
+        entity_id=student_code,
+    )
     log_audit(db, current_user.id, "TEACHER_CREATE_STUDENT", "student", student_code, {"teacher": t.teacher_code}, request)
     db.commit()
     return {
@@ -463,78 +488,107 @@ def save_class_attendance(
 
     saved = 0
     absent_alerts = []
-    for item in payload.entries:
-        st = students_map.get(item.student_id)
-        if not st:
-            continue
-        st_val = item.status.strip().upper()
-        if st_val not in {"PRESENT", "ABSENT"}:
-            raise HTTPException(status_code=400, detail="Attendance status must be PRESENT or ABSENT.")
-        existing = (
-            db.query(Attendance)
-            .filter(Attendance.student_id == item.student_id, Attendance.attendance_date == payload.attendance_date)
-            .first()
-        )
-        if existing:
-            existing.status = st_val
-            existing.remarks = item.remarks
-            existing.class_id = st.class_id
-            existing.teacher_id = t.id
-            existing.marked_by_user_id = current_user.id
-        else:
-            db.add(Attendance(
-                student_id=item.student_id,
-                class_id=st.class_id,
-                attendance_date=payload.attendance_date,
-                status=st_val,
-                teacher_id=t.id,
-                marked_by_user_id=current_user.id,
-                remarks=item.remarks,
-            ))
-        saved += 1
-
-        if st_val == "ABSENT":
-            cls_label = f"{st.school_class.name} ({st.section})" if st.school_class else ""
-            note_txt = f" Note: {item.remarks}." if item.remarks else ""
-            msg = (
-                f"AK Tuition Absence Alert: {st.student_name} ({st.student_code}, {cls_label}) "
-                f"was marked ABSENT on {payload.attendance_date.isoformat()}.{note_txt} – AK Tuition"
+    absent_names = []
+    settings = get_or_create_settings(db)
+    gw_mode = gateway_status_summary(settings)
+    with httpx.Client(timeout=10.0) as http_cli:
+        for item in payload.entries:
+            st = students_map.get(item.student_id)
+            if not st:
+                continue
+            st_val = item.status.strip().upper()
+            if st_val not in {"PRESENT", "ABSENT"}:
+                raise HTTPException(status_code=400, detail="Attendance status must be PRESENT or ABSENT.")
+            existing = (
+                db.query(Attendance)
+                .filter(Attendance.student_id == item.student_id, Attendance.attendance_date == payload.attendance_date)
+                .first()
             )
-            seen_phones = set()
-            targets = [("parent", st.parent_phone, st.parent.user_id if st.parent else None, st.parent_id)]
-            if st.student_phone:
-                targets.append(("student", st.student_phone, st.user_id, None))
-            for tgt_role, raw_phone, uid, pid in targets:
-                clean_p = (raw_phone or "").strip()
-                tail = "".join(c for c in clean_p if c.isdigit())[-10:]
-                if not clean_p or tail in seen_phones:
-                    continue
-                seen_phones.add(tail)
-                notif = send_notification(
-                    db,
-                    recipient_phone=clean_p,
-                    channel="WHATSAPP",
-                    notification_type="ABSENT",
-                    message=msg,
-                    dedup_key=f"ABSENT_{st.id}_{payload.attendance_date.isoformat()}_{tail}",
-                    recipient_user_id=uid,
-                    student_id=st.id,
-                    parent_id=pid,
-                )
-                links = build_direct_links(clean_p, msg)
-                absent_alerts.append({
-                    "student_id": st.id,
-                    "student_code": st.student_code,
-                    "student_name": st.student_name,
-                    "class_name": cls_label,
-                    "target": tgt_role,
-                    "phone": clean_p,
-                    "status": notif.status,
-                    "message": msg,
-                    "whatsapp_url": links["whatsapp_url"],
-                    "sms_url": links["sms_url"],
-                })
+            if existing:
+                existing.status = st_val
+                existing.remarks = item.remarks
+                existing.class_id = st.class_id
+                existing.teacher_id = t.id
+                existing.marked_by_user_id = current_user.id
+            else:
+                db.add(Attendance(
+                    student_id=item.student_id,
+                    class_id=st.class_id,
+                    attendance_date=payload.attendance_date,
+                    status=st_val,
+                    teacher_id=t.id,
+                    marked_by_user_id=current_user.id,
+                    remarks=item.remarks,
+                ))
+            saved += 1
 
+            if st_val == "ABSENT":
+                cls_label = f"{st.school_class.name} ({st.section})" if st.school_class else ""
+                absent_names.append(f"{st.student_name} ({st.student_code})")
+                note_txt = f" Note: {item.remarks}." if item.remarks else ""
+                msg = (
+                    f"AK Tuition Absence Alert: {st.student_name} ({st.student_code}, {cls_label}) "
+                    f"was marked ABSENT on {payload.attendance_date.isoformat()}.{note_txt} – AK Tuition"
+                )
+                seen_phones = set()
+                targets = [("parent", st.parent_phone, st.parent.user_id if st.parent else None, st.parent_id)]
+                if st.student_phone:
+                    targets.append(("student", st.student_phone, st.user_id, None))
+                for tgt_role, raw_phone, uid, pid in targets:
+                    clean_p = (raw_phone or "").strip()
+                    tail = "".join(c for c in clean_p if c.isdigit())[-10:]
+                    if not clean_p or tail in seen_phones:
+                        continue
+                    seen_phones.add(tail)
+                    notif = send_notification(
+                        db,
+                        recipient_phone=clean_p,
+                        channel="WHATSAPP",
+                        notification_type="ABSENT",
+                        message=msg,
+                        dedup_key=f"ABSENT_{st.id}_{payload.attendance_date.isoformat()}_{tail}",
+                        recipient_user_id=uid,
+                        student_id=st.id,
+                        parent_id=pid,
+                        http_client=http_cli,
+                    )
+                    if gw_mode["sms_live"]:
+                        send_notification(
+                            db,
+                            recipient_phone=clean_p,
+                            channel="SMS",
+                            notification_type="ABSENT",
+                            message=msg,
+                            dedup_key=f"ABSENT_SMS_{st.id}_{payload.attendance_date.isoformat()}_{tail}",
+                            recipient_user_id=uid,
+                            student_id=st.id,
+                            parent_id=pid,
+                            http_client=http_cli,
+                        )
+                    links = build_direct_links(clean_p, msg)
+                    absent_alerts.append({
+                        "student_id": st.id,
+                        "student_code": st.student_code,
+                        "student_name": st.student_name,
+                        "class_name": cls_label,
+                        "target": tgt_role,
+                        "phone": clean_p,
+                        "status": notif.status,
+                        "provider": notif.provider,
+                        "message": msg,
+                        "whatsapp_url": links["whatsapp_url"],
+                        "sms_url": links["sms_url"],
+                    })
+
+    present_cnt = max(0, saved - len(absent_names))
+    abs_summary = f"Absentees: {', '.join(absent_names[:15])}" if absent_names else "All students PRESENT!"
+    dispatch_group_workflow_event(
+        db,
+        event_type="ATTENDANCE_MARKED",
+        title=f"Attendance Saved ({payload.attendance_date.isoformat()})",
+        message=f"Marked by {t.teacher_name}: {present_cnt} Present, {len(absent_names)} Absent (Total {saved}). {abs_summary}",
+        entity_id=f"{payload.class_id or 'ALL'}:{payload.attendance_date.isoformat()}",
+    )
     log_audit(
         db,
         current_user.id,
@@ -614,6 +668,73 @@ def list_teacher_examinations(current_user: User = Depends(require_roles(["teach
                 "subjects": subjects,
             })
     return out
+
+
+@router.get("/marks/matrix")
+def get_all_subjects_marks_matrix(
+    class_id: int,
+    examination_id: Optional[int] = None,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    students = (
+        db.query(Student)
+        .filter(Student.class_id == class_id, Student.is_active == True)
+        .order_by(Student.student_code.asc())
+        .all()
+    )
+    subjects = db.query(Subject).filter(Subject.is_active == True).order_by(Subject.name.asc()).all()
+    existing_scores: dict[int, dict[int, float]] = {}
+    existing_remarks: dict[int, str] = {}
+    subject_max_marks: dict[int, float] = {s.id: 100.0 for s in subjects}
+    published_subject_ids: list[int] = []
+
+    if examination_id:
+        es_rows = db.query(ExaminationSubject).filter(ExaminationSubject.examination_id == examination_id).all()
+        for es in es_rows:
+            subject_max_marks[es.subject_id] = float(es.max_marks)
+            ap = (
+                db.query(ResultApproval)
+                .filter(ResultApproval.examination_subject_id == es.id)
+                .order_by(ResultApproval.id.desc())
+                .first()
+            )
+            if ap and ap.status == "PUBLISHED":
+                published_subject_ids.append(es.subject_id)
+        mark_rows = (
+            db.query(Mark)
+            .filter(Mark.examination_id == examination_id)
+            .all()
+        )
+        for m in mark_rows:
+            existing_scores.setdefault(m.student_id, {})[m.subject_id] = float(m.marks_obtained)
+            if m.remarks and m.student_id not in existing_remarks:
+                existing_remarks[m.student_id] = m.remarks
+
+    return {
+        "class_id": class_id,
+        "examination_id": examination_id,
+        "subjects": [
+            {
+                "subject_id": s.id,
+                "name": s.name,
+                "code": s.code,
+                "max_marks": subject_max_marks.get(s.id, 100.0),
+                "is_published": s.id in published_subject_ids,
+            }
+            for s in subjects
+        ],
+        "students": [
+            {
+                "student_id": st.id,
+                "student_code": st.student_code,
+                "student_name": st.student_name,
+                "scores": existing_scores.get(st.id, {}),
+                "remarks": existing_remarks.get(st.id, ""),
+            }
+            for st in students
+        ],
+    }
 
 
 @router.get("/marks/{examination_subject_id}")
@@ -731,6 +852,14 @@ def save_and_submit_marks(
                 notes=payload.notes,
             ))
 
+    if payload.submit_for_approval:
+        dispatch_group_workflow_event(
+            db,
+            event_type="MARKS_SUBMITTED",
+            title="Marks Submitted for Approval",
+            message=f"{t.teacher_name} submitted {len(payload.entries)} mark(s) for {ex.name} ({es.subject.name if es.subject else 'Subject'}). Ready for Admin Publish.",
+            entity_id=str(es.id),
+        )
     log_audit(db, current_user.id, "SUBMIT_MARKS" if payload.submit_for_approval else "SAVE_MARKS_DRAFT", "marks", str(es.id), {"count": len(payload.entries)}, request)
     db.commit()
     return {
@@ -870,6 +999,14 @@ def direct_save_and_submit_marks(
                 notes=payload.notes,
             ))
 
+    if payload.submit_for_approval:
+        dispatch_group_workflow_event(
+            db,
+            event_type="MARKS_SUBMITTED",
+            title="Exam / Re-Exam Marks Submitted",
+            message=f"{ex.name} ({subj.name}) marks for {len(payload.entries)} student(s) submitted by {current_user.full_name} for Admin approval.",
+            entity_id=str(es.id),
+        )
     log_audit(db, current_user.id, "DIRECT_SUBMIT_MARKS", "marks", str(es.id), {"exam_name": ex.name, "count": len(payload.entries)}, request)
     db.commit()
     return {
@@ -877,6 +1014,189 @@ def direct_save_and_submit_marks(
         "examination_id": ex.id,
         "examination_subject_id": es.id,
         "message": f"Marks for '{ex.name}' submitted for Administrator approval (status: PENDING)." if payload.submit_for_approval else f"Marks for '{ex.name}' saved as draft.",
+    }
+
+
+@router.post("/marks/bulk-all-subjects")
+def save_all_subjects_marks_at_once(
+    payload: TeacherAllSubjectsMarksEntry,
+    request: Request,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    t = _get_teacher(current_user, db)
+    cls = db.query(SchoolClass).filter(SchoolClass.id == payload.class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Selected class not found.")
+    if not payload.subjects:
+        raise HTTPException(status_code=400, detail="Select at least one subject column.")
+    if not payload.entries:
+        raise HTTPException(status_code=400, detail="Enter marks for at least one student.")
+
+    ay = db.query(AcademicYear).filter(AcademicYear.is_current == True).first() or db.query(AcademicYear).first()
+    if not ay:
+        raise HTTPException(status_code=400, detail="No active academic year configured.")
+
+    if payload.examination_id:
+        ex = db.query(Examination).filter(Examination.id == payload.examination_id).first()
+        if not ex:
+            raise HTTPException(status_code=404, detail="Selected examination not found.")
+        if ex.class_id != payload.class_id:
+            raise HTTPException(status_code=400, detail="Selected examination belongs to a different class.")
+    else:
+        clean_name = (payload.exam_name or "").strip()
+        if not clean_name:
+            raise HTTPException(status_code=400, detail="Enter an Examination / Re-Examination name or select an existing examination.")
+        ex = (
+            db.query(Examination)
+            .filter(Examination.class_id == payload.class_id, func.lower(Examination.name) == clean_name.lower())
+            .first()
+        )
+        if not ex:
+            ex_date = payload.exam_date or date.today()
+            ex = Examination(
+                name=clean_name,
+                academic_year_id=ay.id,
+                class_id=payload.class_id,
+                exam_type=(payload.exam_type or "UNIT_TEST").strip().upper(),
+                start_date=ex_date,
+                end_date=ex_date,
+                status="SCHEDULED",
+                created_by_user_id=current_user.id,
+            )
+            db.add(ex)
+            db.flush()
+
+    settings = get_or_create_settings(db)
+    target_status = "PENDING" if payload.submit_for_approval else "DRAFT"
+    valid_students = {s.id for s in db.query(Student).filter(Student.class_id == payload.class_id, Student.is_active == True).all()}
+    subj_map = {s.id: s for s in db.query(Subject).filter(Subject.id.in_([c.subject_id for c in payload.subjects])).all()}
+
+    es_by_subj: dict[int, ExaminationSubject] = {}
+    max_by_subj: dict[int, float] = {}
+    for col in payload.subjects:
+        if col.subject_id not in subj_map:
+            raise HTTPException(status_code=404, detail=f"Subject {col.subject_id} not found.")
+        es = (
+            db.query(ExaminationSubject)
+            .filter(ExaminationSubject.examination_id == ex.id, ExaminationSubject.subject_id == col.subject_id)
+            .first()
+        )
+        if not es:
+            es = ExaminationSubject(
+                examination_id=ex.id,
+                subject_id=col.subject_id,
+                exam_date=payload.exam_date or ex.start_date or date.today(),
+                max_marks=col.max_marks,
+            )
+            db.add(es)
+            db.flush()
+        else:
+            es.max_marks = col.max_marks
+        ap = db.query(ResultApproval).filter(ResultApproval.examination_subject_id == es.id).order_by(ResultApproval.id.desc()).first()
+        if ap and ap.status == "PUBLISHED":
+            raise HTTPException(
+                status_code=400,
+                detail=f"{subj_map[col.subject_id].name} is already PUBLISHED by Admin and cannot be overwritten.",
+            )
+        es_by_subj[col.subject_id] = es
+        max_by_subj[col.subject_id] = float(col.max_marks)
+
+    marks_saved = 0
+    touched_es_ids = set()
+    for row in payload.entries:
+        if row.student_id not in valid_students:
+            raise HTTPException(status_code=400, detail=f"Student {row.student_id} is not in this class.")
+        for sid_key, score_val in row.scores.items():
+            sid = int(sid_key)
+            if sid not in es_by_subj:
+                continue
+            es = es_by_subj[sid]
+            max_m = max_by_subj[sid]
+            if score_val < 0 or score_val > max_m:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Score ({score_val}) for {subj_map[sid].name} must be between 0 and {max_m}.",
+                )
+            pct = (score_val / max_m) * 100 if max_m else 0.0
+            grade, auto_rem = compute_grade(pct, settings.grading_rules)
+            existing = (
+                db.query(Mark)
+                .filter(Mark.examination_subject_id == es.id, Mark.student_id == row.student_id)
+                .first()
+            )
+            if existing:
+                existing.marks_obtained = score_val
+                existing.max_marks = max_m
+                existing.grade = grade
+                existing.remarks = row.remarks or auto_rem
+                existing.status = target_status
+                existing.entered_by_user_id = current_user.id
+                if payload.submit_for_approval:
+                    existing.submitted_at = datetime.utcnow()
+            else:
+                db.add(Mark(
+                    examination_id=ex.id,
+                    examination_subject_id=es.id,
+                    student_id=row.student_id,
+                    subject_id=sid,
+                    max_marks=max_m,
+                    marks_obtained=score_val,
+                    grade=grade,
+                    remarks=row.remarks or auto_rem,
+                    status=target_status,
+                    entered_by_user_id=current_user.id,
+                    submitted_at=datetime.utcnow() if payload.submit_for_approval else None,
+                ))
+            marks_saved += 1
+            touched_es_ids.add(es.id)
+
+    if marks_saved == 0:
+        raise HTTPException(status_code=400, detail="Enter at least one student mark before saving.")
+
+    if payload.submit_for_approval:
+        for es_id in touched_es_ids:
+            ap = db.query(ResultApproval).filter(ResultApproval.examination_subject_id == es_id).order_by(ResultApproval.id.desc()).first()
+            if ap:
+                ap.status = "PENDING"
+                ap.submitted_by_user_id = current_user.id
+                ap.submitted_date = datetime.utcnow()
+                ap.rejection_reason = None
+                ap.notes = payload.notes
+            else:
+                db.add(ResultApproval(
+                    examination_id=ex.id,
+                    examination_subject_id=es_id,
+                    submitted_by_user_id=current_user.id,
+                    submitted_date=datetime.utcnow(),
+                    status="PENDING",
+                    notes=payload.notes,
+                ))
+        dispatch_group_workflow_event(
+            db,
+            event_type="ALL_SUBJECT_MARKS_SUBMITTED",
+            title=f"All Subject Marks Submitted ({ex.name})",
+            message=f"{t.teacher_name} entered {marks_saved} mark entries across {len(touched_es_ids)} subject(s) for {cls.name} ({cls.section}). Ready for Admin Declare All!",
+            entity_id=str(ex.id),
+        )
+
+    log_audit(
+        db,
+        current_user.id,
+        "BULK_ALL_SUBJECTS_MARKS",
+        "examination",
+        str(ex.id),
+        {"subjects_count": len(touched_es_ids), "marks_saved": marks_saved},
+        request,
+    )
+    db.commit()
+    return {
+        "status": target_status,
+        "examination_id": ex.id,
+        "exam_name": ex.name,
+        "subjects_count": len(touched_es_ids),
+        "marks_saved": marks_saved,
+        "message": f"Saved {marks_saved} marks across {len(touched_es_ids)} subject(s) for '{ex.name}' (status: {target_status}).",
     }
 
 
@@ -984,6 +1304,14 @@ def create_question_paper(
                 is_correct=opt.is_correct,
             ))
 
+    if qp.is_published:
+        dispatch_group_workflow_event(
+            db,
+            event_type="QUESTION_PAPER_CREATED",
+            title="New Question Paper / Online Test",
+            message=f"{t.teacher_name} published '{qp.title}' ({qp.total_marks} Marks, {qp.duration_minutes} mins).",
+            entity_id=str(qp.id),
+        )
     log_audit(db, current_user.id, "CREATE_QUESTION_PAPER", "question_paper", str(qp.id), {"title": qp.title}, request)
     db.commit()
     db.refresh(qp)

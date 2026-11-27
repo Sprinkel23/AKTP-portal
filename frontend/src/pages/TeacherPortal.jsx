@@ -48,9 +48,18 @@ export default function TeacherPortal() {
   const [attRows, setAttRows] = useState([]);
 
   // Marks state
-  const [marksMode, setMarksMode] = useState("existing"); // existing | direct
+  const [marksMode, setMarksMode] = useState("matrix"); // matrix | direct | existing
   const [selectedExamSubjId, setSelectedExamSubjId] = useState("");
   const [marksSheet, setMarksSheet] = useState(null);
+  const [matrixCfg, setMatrixCfg] = useState({
+    class_id: "",
+    examination_id: "",
+    exam_name: "",
+    exam_type: "UNIT_TEST",
+    exam_date: new Date().toISOString().slice(0, 10),
+  });
+  const [matrixSubjects, setMatrixSubjects] = useState([]);
+  const [matrixRows, setMatrixRows] = useState([]);
   const [directExam, setDirectExam] = useState({
     exam_name: "",
     exam_type: "RE_EXAMINATION",
@@ -149,6 +158,33 @@ export default function TeacherPortal() {
   const uniqueClasses = allClasses.length
     ? allClasses.map((c) => ({ id: c.id, name: `${c.name} (${c.section})` }))
     : Array.from(new Map((dash?.assignments || []).map((a) => [a.class_id, { id: a.class_id, name: a.class_name }])).values());
+
+  const loadAllSubjectsMatrix = async (classId, examId = "") => {
+    if (!classId) {
+      setMatrixSubjects([]);
+      setMatrixRows([]);
+      return;
+    }
+    try {
+      const res = await api.get(
+        `/api/teacher/marks/matrix?class_id=${classId}${examId ? `&examination_id=${examId}` : ""}`
+      );
+      setMatrixSubjects(
+        (res.data.subjects || []).map((s) => ({
+          ...s,
+          included: !s.is_published,
+        }))
+      );
+      setMatrixRows(
+        (res.data.students || []).map((st) => ({
+          ...st,
+          scores: { ...(st.scores || {}) },
+        }))
+      );
+    } catch (err) {
+      notify(err.response?.data?.detail || "Could not load all-subjects marks sheet.", "error");
+    }
+  };
 
   const handleAutoCreatePaper = () => {
     const total = Math.max(1, Math.round(Number(qpForm.total_marks) || 20));
@@ -571,28 +607,276 @@ export default function TeacherPortal() {
               <div>
                 <h3 className="font-bold text-navy-900">Examination &amp; Re-Examination Marks Entry</h3>
                 <p className="text-xs text-slate-600">
-                  Select an examination OR directly type an Examination / Re-Examination name. Submitted marks enter <strong>PENDING</strong> status for Admin approval.
+                  Enter <strong>ALL Subjects at once</strong> in one full-class spreadsheet, OR enter a single Exam / Re-Exam subject. Submitted marks enter <strong>PENDING</strong> status for Admin approval.
                 </p>
               </div>
-              <div className="inline-flex rounded-xl border p-1 bg-slate-50 text-xs font-bold">
+              <div className="inline-flex flex-wrap rounded-xl border p-1 bg-slate-50 text-xs font-bold gap-1">
                 <button
                   type="button"
-                  onClick={() => setMarksMode("existing")}
-                  className={`px-3 py-1.5 rounded-lg ${marksMode === "existing" ? "bg-navy-900 text-white" : "text-slate-600"}`}
+                  onClick={() => setMarksMode("matrix")}
+                  className={`px-3 py-1.5 rounded-lg ${marksMode === "matrix" ? "bg-navy-900 text-white" : "text-slate-600"}`}
                 >
-                  Select Examination
+                  All Subjects at Once (One Teacher)
                 </button>
                 <button
                   type="button"
                   onClick={() => setMarksMode("direct")}
                   className={`px-3 py-1.5 rounded-lg ${marksMode === "direct" ? "bg-navy-900 text-white" : "text-slate-600"}`}
                 >
-                  Type Exam / Re-Exam Name
+                  Type Exam / Re-Exam
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMarksMode("existing")}
+                  className={`px-3 py-1.5 rounded-lg ${marksMode === "existing" ? "bg-navy-900 text-white" : "text-slate-600"}`}
+                >
+                  Select Scheduled Subject
                 </button>
               </div>
             </div>
 
-            {marksMode === "direct" ? (
+            {marksMode === "matrix" ? (
+              <div className="space-y-4 p-4 rounded-xl bg-slate-50 border">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 text-sm">
+                  <select
+                    value={matrixCfg.class_id}
+                    onChange={(e) => {
+                      const cid = e.target.value;
+                      setMatrixCfg({ ...matrixCfg, class_id: cid, examination_id: "" });
+                      loadAllSubjectsMatrix(cid, "");
+                    }}
+                    className="rounded-lg border px-3 py-2 bg-white font-semibold"
+                  >
+                    <option value="">1. Select Class</option>
+                    {uniqueClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <select
+                    value={matrixCfg.examination_id}
+                    onChange={(e) => {
+                      const exId = e.target.value;
+                      setMatrixCfg({ ...matrixCfg, examination_id: exId });
+                      if (matrixCfg.class_id) loadAllSubjectsMatrix(matrixCfg.class_id, exId);
+                    }}
+                    className="rounded-lg border px-3 py-2 bg-white"
+                  >
+                    <option value="">2a. New Exam / Type Below</option>
+                    {exams
+                      .filter((ex) => !matrixCfg.class_id || String(ex.class_id) === String(matrixCfg.class_id))
+                      .map((ex) => (
+                        <option key={ex.id} value={ex.id}>
+                          {ex.name} ({ex.class_name})
+                        </option>
+                      ))}
+                  </select>
+                  <input
+                    disabled={Boolean(matrixCfg.examination_id)}
+                    placeholder="2b. Or Type Exam / Re-Exam Name"
+                    value={matrixCfg.exam_name}
+                    onChange={(e) => setMatrixCfg({ ...matrixCfg, exam_name: e.target.value })}
+                    className="rounded-lg border px-3 py-2 bg-white disabled:bg-slate-100"
+                  />
+                  <select
+                    disabled={Boolean(matrixCfg.examination_id)}
+                    value={matrixCfg.exam_type}
+                    onChange={(e) => setMatrixCfg({ ...matrixCfg, exam_type: e.target.value })}
+                    className="rounded-lg border px-3 py-2 bg-white disabled:bg-slate-100"
+                  >
+                    <option value="UNIT_TEST">Unit Test</option>
+                    <option value="MID_TERM">Mid-Term Exam</option>
+                    <option value="FINAL_EXAM">Final Exam</option>
+                    <option value="RE_EXAMINATION">Re-Examination</option>
+                    <option value="PRACTICE_TEST">Practice Test</option>
+                  </select>
+                  <input
+                    type="date"
+                    value={matrixCfg.exam_date}
+                    onChange={(e) => setMatrixCfg({ ...matrixCfg, exam_date: e.target.value })}
+                    className="rounded-lg border px-3 py-2 bg-white text-xs"
+                  />
+                </div>
+
+                {matrixSubjects.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="font-bold text-navy-900">Subjects Included:</span>
+                    {matrixSubjects.map((subj, idx) => (
+                      <label
+                        key={subj.subject_id}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border cursor-pointer ${
+                          subj.is_published
+                            ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                            : subj.included
+                            ? "bg-navy-900 text-white border-navy-900"
+                            : "bg-white text-slate-600 border-slate-300"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={subj.is_published}
+                          checked={subj.included}
+                          onChange={(e) => {
+                            const next = [...matrixSubjects];
+                            next[idx].included = e.target.checked;
+                            setMatrixSubjects(next);
+                          }}
+                        />
+                        <span>{subj.name}{subj.is_published ? " (Published)" : ""}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                {matrixRows.length > 0 && matrixSubjects.some((s) => s.included) ? (
+                  <div className="space-y-3">
+                    <div className="overflow-x-auto bg-white rounded-xl border">
+                      <table className="w-full text-xs">
+                        <thead className="bg-navy-900 text-white uppercase">
+                          <tr>
+                            <th className="p-2.5 text-left">ID</th>
+                            <th className="p-2.5 text-left min-w-[140px]">Student Name</th>
+                            {matrixSubjects.map((subj, sIdx) =>
+                              subj.included ? (
+                                <th key={subj.subject_id} className="p-2 text-center min-w-[105px]">
+                                  <div>{subj.name}</div>
+                                  <div className="flex items-center justify-center gap-1 mt-1 font-normal normal-case">
+                                    <span className="text-[10px] text-gold-400">Max:</span>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      value={subj.max_marks}
+                                      onChange={(e) => {
+                                        const next = [...matrixSubjects];
+                                        next[sIdx].max_marks = e.target.value;
+                                        setMatrixSubjects(next);
+                                      }}
+                                      className="w-14 rounded px-1 py-0.5 text-center text-navy-900 text-[11px] font-bold"
+                                    />
+                                  </div>
+                                </th>
+                              ) : null
+                            )}
+                            <th className="p-2.5 text-center">Total / %</th>
+                            <th className="p-2.5 text-left min-w-[120px]">Remarks</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {matrixRows.map((st, rIdx) => {
+                            const activeCols = matrixSubjects.filter((s) => s.included);
+                            let rowObt = 0;
+                            let rowMax = 0;
+                            activeCols.forEach((col) => {
+                              const v = st.scores?.[col.subject_id];
+                              if (v !== "" && v !== undefined && v !== null && !Number.isNaN(Number(v))) {
+                                rowObt += Number(v);
+                                rowMax += Number(col.max_marks) || 0;
+                              }
+                            });
+                            const rowPct = rowMax ? ((rowObt / rowMax) * 100).toFixed(1) : "0.0";
+                            return (
+                              <tr key={st.student_id}>
+                                <td className="p-2 font-mono font-bold text-royal-700">{st.student_code}</td>
+                                <td className="p-2 font-medium">{st.student_name}</td>
+                                {activeCols.map((col) => (
+                                  <td key={col.subject_id} className="p-2 text-center">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={Number(col.max_marks) || 100}
+                                      step="0.5"
+                                      value={st.scores?.[col.subject_id] ?? ""}
+                                      onChange={(e) => {
+                                        const next = [...matrixRows];
+                                        next[rIdx].scores = {
+                                          ...(next[rIdx].scores || {}),
+                                          [col.subject_id]: e.target.value,
+                                        };
+                                        setMatrixRows(next);
+                                      }}
+                                      className="w-20 rounded border px-1.5 py-1 text-center font-semibold"
+                                    />
+                                  </td>
+                                ))}
+                                <td className="p-2 text-center font-bold text-navy-900 whitespace-nowrap">
+                                  {rowObt} / {rowMax} <span className="text-royal-700">({rowPct}%)</span>
+                                </td>
+                                <td className="p-2">
+                                  <input
+                                    value={st.remarks || ""}
+                                    onChange={(e) => {
+                                      const next = [...matrixRows];
+                                      next[rIdx].remarks = e.target.value;
+                                      setMatrixRows(next);
+                                    }}
+                                    placeholder="Remarks"
+                                    className="w-full rounded border px-2 py-1 text-xs"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!matrixCfg.class_id) {
+                          notify("Select a class first.", "error");
+                          return;
+                        }
+                        if (!matrixCfg.examination_id && !matrixCfg.exam_name.trim()) {
+                          notify("Select an existing examination or type an Exam / Re-Exam name.", "error");
+                          return;
+                        }
+                        const selectedCols = matrixSubjects
+                          .filter((s) => s.included && !s.is_published)
+                          .map((s) => ({ subject_id: s.subject_id, max_marks: Number(s.max_marks) || 100 }));
+                        const entries = matrixRows
+                          .map((r) => {
+                            const scores = {};
+                            selectedCols.forEach((col) => {
+                              const raw = r.scores?.[col.subject_id];
+                              if (raw !== "" && raw !== undefined && raw !== null) {
+                                scores[col.subject_id] = Number(raw);
+                              }
+                            });
+                            return { student_id: r.student_id, scores, remarks: r.remarks || null };
+                          })
+                          .filter((r) => Object.keys(r.scores).length > 0);
+                        if (!entries.length) {
+                          notify("Enter at least one student mark across the grid.", "error");
+                          return;
+                        }
+                        try {
+                          const res = await api.post("/api/teacher/marks/bulk-all-subjects", {
+                            class_id: Number(matrixCfg.class_id),
+                            examination_id: matrixCfg.examination_id ? Number(matrixCfg.examination_id) : null,
+                            exam_name: matrixCfg.exam_name.trim() || null,
+                            exam_type: matrixCfg.exam_type,
+                            exam_date: matrixCfg.exam_date || null,
+                            submit_for_approval: true,
+                            subjects: selectedCols,
+                            entries,
+                          });
+                          notify(res.data.message);
+                          loadAll();
+                          loadAllSubjectsMatrix(matrixCfg.class_id, res.data.examination_id);
+                          setMatrixCfg((prev) => ({ ...prev, examination_id: String(res.data.examination_id), exam_name: "" }));
+                        } catch (err) {
+                          notify(err.response?.data?.detail || "Failed to submit all-subject marks.", "error");
+                        }
+                      }}
+                      className="px-6 py-2.5 rounded-xl bg-navy-900 hover:bg-royal-600 text-white text-sm font-bold"
+                    >
+                      Submit ALL Subject Marks for Admin Approval (PENDING)
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Select a Class above to load all active students and enter every subject mark in one single spreadsheet.
+                  </p>
+                )}
+              </div>
+            ) : marksMode === "direct" ? (
               <div className="space-y-4 p-4 rounded-xl bg-slate-50 border">
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
                   <input

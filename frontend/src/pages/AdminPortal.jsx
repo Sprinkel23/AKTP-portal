@@ -122,6 +122,8 @@ export default function AdminPortal() {
   });
 
   const [rejectReasonMap, setRejectReasonMap] = useState({});
+  const [notifFilter, setNotifFilter] = useState("ALL");
+  const [testGatewayPhone, setTestGatewayPhone] = useState("");
   const [annForm, setAnnForm] = useState({ title: "", category: "NOTICE", content: "", event_date: "", target_audience: "PUBLIC", is_featured: false, image_path: "" });
   const [notifForm, setNotifForm] = useState({ notification_type: "ANNOUNCEMENT", channel: "SMS", class_id: "", message: "" });
   const [reportFilters, setReportFilters] = useState({ class_id: "", student_id: "", examination_id: "", subject_id: "", start_date: "", end_date: "" });
@@ -1224,14 +1226,24 @@ export default function AdminPortal() {
       {/* NOTIFICATIONS (WHATSAPP & SMS ALERTS) */}
       {tab === "notifications" && (
         <div className="space-y-6">
-          <div className="bg-white rounded-2xl p-4 border flex flex-wrap items-center justify-between gap-3">
-            <div className="text-sm">
-              <strong>Real-Time Result &amp; Absence Messaging:</strong>{" "}
-              WhatsApp Cloud API:{" "}
-              <span className={`font-bold ${notifData.mode?.whatsapp_live ? "text-emerald-700" : "text-royal-700"}`}>
-                {notifData.mode?.whatsapp_live ? "AUTO CLOUD ENABLED" : "DIRECT WHATSAPP & SMS DISPATCH ACTIVE"}
+          <div className="bg-white rounded-2xl p-4 border space-y-2">
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <strong className="text-sm text-navy-900">Automated Delivery Status:</strong>
+              <span className={`px-2.5 py-1 rounded-full font-bold ${notifData.mode?.whatsapp_live ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                WhatsApp: {notifData.mode?.whatsapp_live ? "LIVE AUTO-SEND (NO CHROME)" : "NO GATEWAY CONNECTED (USE SETTINGS)"}
+              </span>
+              <span className={`px-2.5 py-1 rounded-full font-bold ${notifData.mode?.sms_live ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                Bulk SMS: {notifData.mode?.sms_live ? "LIVE AUTO-SEND" : "NOT CONFIGURED"}
+              </span>
+              <span className={`px-2.5 py-1 rounded-full font-bold ${notifData.mode?.group_live ? "bg-emerald-100 text-emerald-800" : "bg-blue-50 text-royal-700"}`}>
+                Group Broadcast: {notifData.mode?.group_live ? "LIVE AUTO-GROUP ACTIVE" : "IN-PORTAL AUTO FEED ACTIVE"}
               </span>
             </div>
+            {!notifData.mode?.whatsapp_live && !notifData.mode?.sms_live && (
+              <p className="text-[11px] text-amber-800">
+                To automatically deliver results &amp; absence messages directly to registered parent phones in bulk without opening WhatsApp in Chrome, connect a WhatsApp Webhook URL / Cloud API or SMS Webhook / MSG91 key in <strong>Settings -&gt; Automatic Gateway</strong>.
+              </p>
+            )}
           </div>
 
           <form
@@ -1281,20 +1293,40 @@ export default function AdminPortal() {
           </form>
 
           <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
-            <div className="p-4 border-b font-bold text-navy-900">Notification Delivery History</div>
+            <div className="p-4 border-b flex flex-wrap items-center justify-between gap-2">
+              <div className="font-bold text-navy-900">Auto-Workflow Group Feed &amp; Notification History</div>
+              <div className="inline-flex rounded-lg border p-0.5 bg-slate-50 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setNotifFilter("ALL")}
+                  className={`px-3 py-1 rounded-md ${notifFilter === "ALL" ? "bg-navy-900 text-white" : "text-slate-600"}`}
+                >
+                  All Logs
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNotifFilter("GROUP")}
+                  className={`px-3 py-1 rounded-md ${notifFilter === "GROUP" ? "bg-navy-900 text-white" : "text-slate-600"}`}
+                >
+                  Group Auto-Workflow ({notifData.notifications.filter((x) => x.channel === "GROUP").length})
+                </button>
+              </div>
+            </div>
             <table className="w-full text-xs">
               <thead className="bg-slate-100 uppercase">
                 <tr>
                   <th className="p-3 text-left">Time</th>
-                  <th className="p-3 text-left">Phone</th>
+                  <th className="p-3 text-left">Phone / Group</th>
                   <th className="p-3 text-left">Channel</th>
                   <th className="p-3 text-left">Type</th>
                   <th className="p-3 text-left">Status / Provider</th>
-                  <th className="p-3 text-left">Message & Delivery Detail</th>
+                  <th className="p-3 text-left">Message &amp; Delivery Detail</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {notifData.notifications.map((n) => (
+                {notifData.notifications
+                  .filter((n) => notifFilter === "ALL" || n.channel === "GROUP")
+                  .map((n) => (
                   <tr key={n.id}>
                     <td className="p-3 whitespace-nowrap">{n.created_at.slice(0, 16).replace("T", " ")}</td>
                     <td className="p-3 font-mono">{n.recipient_phone}</td>
@@ -1568,34 +1600,104 @@ export default function AdminPortal() {
                 />
               </div>
 
-              <div className="p-4 rounded-xl bg-slate-50 border space-y-2 text-xs">
-                <div className="font-bold text-sm text-navy-900">Automatic WhatsApp / SMS Delivery Gateway</div>
-                <p className="text-[11px] text-slate-500">
-                  Leave blank to use 1-click WhatsApp &amp; SMS alerts from your device, OR add a Webhook URL / Meta Cloud API token below to auto-send directly to parents' WhatsApp numbers when results are declared.
+              <div className="p-4 rounded-xl bg-slate-50 border space-y-2.5 text-xs">
+                <div className="font-bold text-sm text-navy-900">Full Automatic Server Gateway &amp; Group Auto-Broadcast</div>
+                <p className="text-[11px] text-slate-600">
+                  Connect an HTTP Webhook / Cloud API below for true <strong>zero-browser automatic delivery</strong> to registered parent numbers &amp; your Group after every action (attendance, exam, marks, results, announcements).
                 </p>
-                <div className="flex gap-4">
+                <div className="flex flex-wrap gap-4">
+                  <label className="inline-flex items-center gap-1.5 font-semibold text-navy-900">
+                    <input
+                      type="checkbox"
+                      checked={settings.auto_notify_group_on_events ?? true}
+                      onChange={(e) => setSettings({ ...settings, auto_notify_group_on_events: e.target.checked })}
+                    />
+                    Auto-Send Group Message After Every Portal Action
+                  </label>
                   <label className="inline-flex items-center gap-1.5">
                     <input type="checkbox" checked={settings.whatsapp_enabled} onChange={(e) => setSettings({ ...settings, whatsapp_enabled: e.target.checked })} />
-                    Enable WhatsApp Automatic Sending
+                    Enable WhatsApp Gateway
+                  </label>
+                  <label className="inline-flex items-center gap-1.5">
+                    <input type="checkbox" checked={settings.sms_enabled} onChange={(e) => setSettings({ ...settings, sms_enabled: e.target.checked })} />
+                    Enable Bulk SMS Gateway
                   </label>
                 </div>
-                <input
-                  placeholder="Optional Auto-Send Webhook URL (e.g. Ultramsg / GreenAPI / Custom)"
-                  value={settings.whatsapp_webhook_url || ""}
-                  onChange={(e) => setSettings({ ...settings, whatsapp_webhook_url: e.target.value })}
-                  className="w-full rounded border px-2.5 py-1.5"
-                />
-                <input
-                  placeholder="WhatsApp Cloud Phone Number ID (if using Meta Cloud)"
-                  value={settings.whatsapp_phone_number_id || ""}
-                  onChange={(e) => setSettings({ ...settings, whatsapp_phone_number_id: e.target.value })}
-                  className="w-full rounded border px-2.5 py-1.5"
-                />
-                <input
-                  placeholder={settings.has_whatsapp_access_token ? "WhatsApp Access Token (configured)" : "WhatsApp Cloud Access Token"}
-                  onChange={(e) => setSettings({ ...settings, whatsapp_access_token: e.target.value })}
-                  className="w-full rounded border px-2.5 py-1.5"
-                />
+
+                <div className="grid sm:grid-cols-2 gap-2">
+                  <input
+                    placeholder="WhatsApp Gateway Webhook URL (Ultramsg / GreenAPI / WAHA / Custom)"
+                    value={settings.whatsapp_webhook_url || ""}
+                    onChange={(e) => setSettings({ ...settings, whatsapp_webhook_url: e.target.value })}
+                    className="w-full rounded border px-2.5 py-1.5 bg-white"
+                  />
+                  <input
+                    placeholder="WhatsApp Group ID (e.g. 120363...@g.us for auto group posts)"
+                    value={settings.whatsapp_group_id || ""}
+                    onChange={(e) => setSettings({ ...settings, whatsapp_group_id: e.target.value })}
+                    className="w-full rounded border px-2.5 py-1.5 bg-white"
+                  />
+                  <input
+                    placeholder="WhatsApp Cloud Phone Number ID (Meta Cloud optional)"
+                    value={settings.whatsapp_phone_number_id || ""}
+                    onChange={(e) => setSettings({ ...settings, whatsapp_phone_number_id: e.target.value })}
+                    className="w-full rounded border px-2.5 py-1.5 bg-white"
+                  />
+                  <input
+                    placeholder={settings.has_whatsapp_access_token ? "WhatsApp Cloud Token (configured)" : "WhatsApp Cloud Access Token (Meta Cloud optional)"}
+                    onChange={(e) => setSettings({ ...settings, whatsapp_access_token: e.target.value })}
+                    className="w-full rounded border px-2.5 py-1.5 bg-white"
+                  />
+                  <input
+                    placeholder="Bulk SMS Gateway Webhook URL (Fast2SMS / Textlocal / Twilio / Custom)"
+                    value={settings.sms_webhook_url || ""}
+                    onChange={(e) => setSettings({ ...settings, sms_webhook_url: e.target.value })}
+                    className="w-full rounded border px-2.5 py-1.5 bg-white"
+                  />
+                  <input
+                    placeholder={settings.has_msg91_auth_key ? "MSG91 Auth Key (configured)" : "MSG91 Auth Key (optional carrier SMS)"}
+                    onChange={(e) => setSettings({ ...settings, msg91_auth_key: e.target.value })}
+                    className="w-full rounded border px-2.5 py-1.5 bg-white"
+                  />
+                  <input
+                    placeholder={settings.has_telegram_bot_token ? "Telegram Bot Token (configured)" : "Telegram Bot Token (100% free instant group option)"}
+                    onChange={(e) => setSettings({ ...settings, telegram_bot_token: e.target.value })}
+                    className="w-full rounded border px-2.5 py-1.5 bg-white"
+                  />
+                  <input
+                    placeholder="Telegram Group Chat ID (e.g. -1001234567890)"
+                    value={settings.telegram_chat_id || ""}
+                    onChange={(e) => setSettings({ ...settings, telegram_chat_id: e.target.value })}
+                    className="w-full rounded border px-2.5 py-1.5 bg-white"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t">
+                  <input
+                    placeholder="Optional test phone (e.g. 9876543210)"
+                    value={testGatewayPhone}
+                    onChange={(e) => setTestGatewayPhone(e.target.value)}
+                    className="rounded border px-2.5 py-1.5 bg-white flex-1 min-w-[180px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await api.put("/api/admin/settings", settings);
+                        const res = await api.post("/api/admin/notifications/test-gateway", { test_phone: testGatewayPhone || null });
+                        const g = res.data.group_dispatch;
+                        const d = res.data.direct_dispatch;
+                        notify(`Gateway saved & tested! Group: ${g.status} (${g.provider})${d ? ` | Direct: ${d.status} (${d.provider})` : ""}`);
+                        loadAll();
+                      } catch (err) {
+                        notify(err.response?.data?.detail || "Gateway test failed.", "error");
+                      }
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold"
+                  >
+                    Save &amp; Test Gateway Now
+                  </button>
+                </div>
               </div>
             </div>
 

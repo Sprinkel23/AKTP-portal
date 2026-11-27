@@ -5,6 +5,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func
@@ -45,6 +46,7 @@ from app.schemas import (
     ExaminationCreate,
     ExaminationUpdate,
     FeeUpdate,
+    GatewayTestRequest,
     NotificationDispatchRequest,
     ParentConsentUpdate,
     PaymentCreate,
@@ -68,7 +70,12 @@ from app.services.helpers import (
     generate_unique_password,
     get_or_create_settings,
 )
-from app.services.notifications import build_direct_links, send_notification
+from app.services.notifications import (
+    build_direct_links,
+    dispatch_group_workflow_event,
+    gateway_status_summary,
+    send_notification,
+)
 from app.services.pdf_generator import (
     generate_branded_table_pdf,
     generate_fee_receipt_pdf,
@@ -377,6 +384,28 @@ def create_student(payload: StudentCreate, request: Request, current_user: User 
         pending_amount=total_fee,
     ))
 
+    welcome_msg = (
+        f"Welcome to AK Tuition! Student {student.student_name} ({student_code}) registered in {cls_obj.name} ({student.section}). "
+        f"Student ID: {student_code}, Password: {s_pwd}."
+    )
+    send_notification(
+        db,
+        recipient_phone=parent_obj.phone,
+        channel="WHATSAPP",
+        notification_type="WELCOME_CREDENTIAL",
+        message=welcome_msg,
+        dedup_key=f"ADMIN_ADD_{student_code}",
+        recipient_user_id=parent_obj.user_id,
+        student_id=student.id,
+        parent_id=parent_obj.id,
+    )
+    dispatch_group_workflow_event(
+        db,
+        event_type="STUDENT_REGISTERED",
+        title="Student Registered by Admin",
+        message=f"{student.student_name} ({student_code}) added to {cls_obj.name} ({student.section}).",
+        entity_id=student_code,
+    )
     log_audit(db, current_user.id, "CREATE_STUDENT", "student", student_code, {"name": student.student_name}, request)
     db.commit()
     db.refresh(student)
@@ -1041,6 +1070,15 @@ def create_examination(payload: ExaminationCreate, request: Request, current_use
             max_marks=sub.max_marks,
             passing_marks=sub.passing_marks,
         ))
+    cls_obj = db.query(SchoolClass).filter(SchoolClass.id == ex.class_id).first()
+    cls_label = f"{cls_obj.name} ({cls_obj.section})" if cls_obj else f"Class #{ex.class_id}"
+    dispatch_group_workflow_event(
+        db,
+        event_type="EXAM_SCHEDULED",
+        title="Examination Scheduled",
+        message=f"{ex.name} ({ex.exam_type}) for {cls_label} scheduled from {ex.start_date.isoformat()} to {ex.end_date.isoformat()} ({len(payload.subjects)} subject(s)).",
+        entity_id=str(ex.id),
+    )
     log_audit(db, current_user.id, "CREATE_EXAMINATION", "examination", str(ex.id), {"name": ex.name}, request)
     db.commit()
     db.refresh(ex)
@@ -1245,6 +1283,15 @@ def review_result_approval(
                         "sms_url": s_links["sms_url"],
                     })
 
+        exam_title = ap.examination.name if ap.examination else "Examination"
+        subj_title = ap.examination_subject.subject.name if ap.examination_subject and ap.examination_subject.subject else "Subject"
+        dispatch_group_workflow_event(
+            db,
+            event_type="RESULT_DECLARED",
+            title=f"Result Published: {exam_title}",
+            message=f"{subj_title} results for {exam_title} approved & published for {len(marks_rows)} student(s). Check marks: https://aktp-portal.netlify.app/results",
+            entity_id=str(ap.id),
+        )
         log_audit(db, current_user.id, "APPROVE_PUBLISH_RESULT", "result_approval", str(ap.id), {"exam_subject_id": ap.examination_subject_id}, request)
         db.commit()
         return {
@@ -1304,79 +1351,105 @@ def publish_all_pending_results(
     if payload.send_notifications:
         from app.services.pdf_generator import result_division
 
-        for ex_id, st_id in sorted(touched_exam_students):
-            st = db.query(Student).filter(Student.id == st_id).first()
-            ex = db.query(Examination).filter(Examination.id == ex_id).first()
-            if not st or not ex:
-                continue
-            declared_exams[ex.id] = ex
-            ex.status = "RESULTS_DECLARED"
-            ex.results_declared_at = datetime.utcnow()
-            pub_marks = (
-                db.query(Mark)
-                .filter(Mark.examination_id == ex_id, Mark.student_id == st_id, Mark.status == "PUBLISHED")
-                .order_by(Mark.id.asc())
-                .all()
-            )
-            if not pub_marks:
-                continue
-            tot_obt = sum(float(m.marks_obtained) for m in pub_marks)
-            tot_max = sum(float(m.max_marks) for m in pub_marks)
-            pct = round((tot_obt / tot_max) * 100, 2) if tot_max else 0.0
-            overall_grade, _ = compute_grade(pct, settings.grading_rules)
-            any_fail = any(float(m.marks_obtained) < round(float(m.max_marks) * 0.35) for m in pub_marks)
-            division = result_division(pct, any_fail)
-            rank, class_tot = compute_class_rank(db, ex_id, st.class_id, st.id)
-            subj_text = ", ".join(
-                f"{m.subject.code if m.subject else 'SUB'}: {float(m.marks_obtained):g}/{float(m.max_marks):g}"
-                for m in pub_marks
-            )
-            card_link = f"https://aktp-portal.netlify.app/results?code={st.student_code}&exam={ex_id}"
-            msg = (
-                f"AK TUITION - RESULT ALERT\n"
-                f"Exam: {ex.name}\n"
-                f"Student: {st.student_name} ({st.student_code}{st.section or ''})\n"
-                f"Marks: {subj_text}\n"
-                f"Total: {tot_obt:g}/{tot_max:g} ({pct}%) | Rank: #{rank}/{class_tot if class_tot else '-'} | {division} ({overall_grade})\n"
-                f"Marks Card: {card_link}\n"
-                f"- Digitally Signed by {settings.director_name}"
-            )
-            group_lines.append(
-                f"{st.student_code}{st.section or ''} - {st.student_name}: {tot_obt:g}/{tot_max:g} ({pct}%, {division}, Rank #{rank})"
-            )
-            seen = set()
-            targets = [("parent", st.parent_phone, st.parent.user_id if st.parent else None, st.parent_id)]
-            if st.student_phone:
-                targets.append(("student", st.student_phone, st.user_id, None))
-            for tgt, raw_phone, uid, pid in targets:
-                clean_p = (raw_phone or "").strip()
-                tail = "".join(c for c in clean_p if c.isdigit())[-10:]
-                if not clean_p or tail in seen:
+        gw_mode = gateway_status_summary(settings)
+        with httpx.Client(timeout=10.0) as http_cli:
+            for ex_id, st_id in sorted(touched_exam_students):
+                st = db.query(Student).filter(Student.id == st_id).first()
+                ex = db.query(Examination).filter(Examination.id == ex_id).first()
+                if not st or not ex:
                     continue
-                seen.add(tail)
-                notif = send_notification(
-                    db,
-                    recipient_phone=clean_p,
-                    channel="WHATSAPP",
-                    notification_type="RESULT",
-                    message=msg,
-                    dedup_key=f"PUBALL_{ex_id}_{st.id}_{tail}_{datetime.utcnow().strftime('%Y%m%d%H')}",
-                    recipient_user_id=uid,
-                    student_id=st.id,
-                    parent_id=pid,
+                declared_exams[ex.id] = ex
+                ex.status = "RESULTS_DECLARED"
+                ex.results_declared_at = datetime.utcnow()
+                pub_marks = (
+                    db.query(Mark)
+                    .filter(Mark.examination_id == ex_id, Mark.student_id == st_id, Mark.status == "PUBLISHED")
+                    .order_by(Mark.id.asc())
+                    .all()
                 )
-                links = build_direct_links(clean_p, msg)
-                dispatches.append({
-                    "student_code": st.student_code,
-                    "student_name": st.student_name,
-                    "exam_name": ex.name,
-                    "target": tgt,
-                    "phone": clean_p,
-                    "status": notif.status,
-                    "message": msg,
-                    "whatsapp_url": links["whatsapp_url"],
-                    "sms_url": links["sms_url"],
-                })
+                if not pub_marks:
+                    continue
+                tot_obt = sum(float(m.marks_obtained) for m in pub_marks)
+                tot_max = sum(float(m.max_marks) for m in pub_marks)
+                pct = round((tot_obt / tot_max) * 100, 2) if tot_max else 0.0
+                overall_grade, _ = compute_grade(pct, settings.grading_rules)
+                any_fail = any(float(m.marks_obtained) < round(float(m.max_marks) * 0.35) for m in pub_marks)
+                division = result_division(pct, any_fail)
+                rank, class_tot = compute_class_rank(db, ex_id, st.class_id, st.id)
+                subj_text = ", ".join(
+                    f"{m.subject.code if m.subject else 'SUB'}: {float(m.marks_obtained):g}/{float(m.max_marks):g}"
+                    for m in pub_marks
+                )
+                card_link = f"https://aktp-portal.netlify.app/results?code={st.student_code}&exam={ex_id}"
+                msg = (
+                    f"AK TUITION - RESULT ALERT\n"
+                    f"Exam: {ex.name}\n"
+                    f"Student: {st.student_name} ({st.student_code}{st.section or ''})\n"
+                    f"Marks: {subj_text}\n"
+                    f"Total: {tot_obt:g}/{tot_max:g} ({pct}%) | Rank: #{rank}/{class_tot if class_tot else '-'} | {division} ({overall_grade})\n"
+                    f"Marks Card: {card_link}\n"
+                    f"- Digitally Signed by {settings.director_name}"
+                )
+                group_lines.append(
+                    f"{st.student_code}{st.section or ''} - {st.student_name}: {tot_obt:g}/{tot_max:g} ({pct}%, {division}, Rank #{rank})"
+                )
+                seen = set()
+                targets = [("parent", st.parent_phone, st.parent.user_id if st.parent else None, st.parent_id)]
+                if st.student_phone:
+                    targets.append(("student", st.student_phone, st.user_id, None))
+                for tgt, raw_phone, uid, pid in targets:
+                    clean_p = (raw_phone or "").strip()
+                    tail = "".join(c for c in clean_p if c.isdigit())[-10:]
+                    if not clean_p or tail in seen:
+                        continue
+                    seen.add(tail)
+                    notif = send_notification(
+                        db,
+                        recipient_phone=clean_p,
+                        channel="WHATSAPP",
+                        notification_type="RESULT",
+                        message=msg,
+                        dedup_key=f"PUBALL_{ex_id}_{st.id}_{tail}_{datetime.utcnow().strftime('%Y%m%d%H')}",
+                        recipient_user_id=uid,
+                        student_id=st.id,
+                        parent_id=pid,
+                        http_client=http_cli,
+                    )
+                    if gw_mode["sms_live"]:
+                        send_notification(
+                            db,
+                            recipient_phone=clean_p,
+                            channel="SMS",
+                            notification_type="RESULT",
+                            message=msg,
+                            dedup_key=f"PUBALL_SMS_{ex_id}_{st.id}_{tail}_{datetime.utcnow().strftime('%Y%m%d%H')}",
+                            recipient_user_id=uid,
+                            student_id=st.id,
+                            parent_id=pid,
+                            http_client=http_cli,
+                        )
+                    links = build_direct_links(clean_p, msg)
+                    dispatches.append({
+                        "student_code": st.student_code,
+                        "student_name": st.student_name,
+                        "exam_name": ex.name,
+                        "target": tgt,
+                        "phone": clean_p,
+                        "status": notif.status,
+                        "provider": notif.provider,
+                        "message": msg,
+                        "whatsapp_url": links["whatsapp_url"],
+                        "sms_url": links["sms_url"],
+                    })
+
+        if group_lines:
+            dispatch_group_workflow_event(
+                db,
+                event_type="RESULTS_DECLARED_GROUP",
+                title="Official Results Declared",
+                message="\n".join(group_lines[:25]) + "\nCheck & Download Marks Card: https://aktp-portal.netlify.app/results",
+                entity_id=str(payload.examination_id or "ALL"),
+            )
 
     # Automatically publish official Result Announcement on Portal Notice Board
     for ex_id, ex_obj in declared_exams.items():
@@ -1499,6 +1572,15 @@ def create_announcement(payload: AnnouncementCreate, current_user: User = Depend
         created_by_user_id=current_user.id,
     )
     db.add(a)
+    db.flush()
+    if a.is_published:
+        dispatch_group_workflow_event(
+            db,
+            event_type="ANNOUNCEMENT_POSTED",
+            title=f"{a.category}: {a.title}",
+            message=a.content[:260],
+            entity_id=str(a.id),
+        )
     db.commit()
     db.refresh(a)
     return {"id": a.id, "title": a.title, "image_path": a.image_path}
@@ -1521,10 +1603,7 @@ def list_notifications(db: Session = Depends(get_db)):
     items = db.query(Notification).order_by(Notification.created_at.desc()).limit(200).all()
     settings = get_or_create_settings(db)
     return {
-        "mode": {
-            "sms_live": bool(settings.sms_enabled and settings.msg91_auth_key),
-            "whatsapp_live": bool(settings.whatsapp_enabled and settings.whatsapp_access_token and settings.whatsapp_phone_number_id),
-        },
+        "mode": gateway_status_summary(settings),
         "notifications": [
             {
                 "id": n.id,
@@ -1575,6 +1654,41 @@ def dispatch_notifications(payload: NotificationDispatchRequest, db: Session = D
             dispatched.append({"student": st.student_code, "channel": ch, "status": n.status, "provider": n.provider})
     db.commit()
     return {"dispatched_count": len(dispatched), "results": dispatched}
+
+
+@router.post("/notifications/test-gateway")
+def test_auto_gateway(
+    payload: GatewayTestRequest,
+    current_user: User = Depends(require_roles(["admin"])),
+    db: Session = Depends(get_db),
+):
+    settings = get_or_create_settings(db)
+    mode = gateway_status_summary(settings)
+    msg = (payload.test_message or "").strip() or "AK Tuition Automated Gateway Test — Auto-Workflow Connected!"
+    grp = dispatch_group_workflow_event(
+        db,
+        event_type="GATEWAY_TEST",
+        title="Automated Gateway Test",
+        message=msg,
+        entity_id=datetime.utcnow().strftime("%H%M%S"),
+    )
+    direct_result = None
+    if (payload.test_phone or "").strip():
+        n = send_notification(
+            db,
+            recipient_phone=payload.test_phone.strip(),
+            channel="WHATSAPP",
+            notification_type="GATEWAY_TEST",
+            message=msg,
+            dedup_key=f"GWTEST_{datetime.utcnow().isoformat()}",
+        )
+        direct_result = {"status": n.status, "provider": n.provider, "error": n.error_detail}
+    db.commit()
+    return {
+        "mode": mode,
+        "group_dispatch": {"status": grp.status, "provider": grp.provider, "error": grp.error_detail},
+        "direct_dispatch": direct_result,
+    }
 
 
 @router.put("/parents/{parent_id}/consent")
@@ -1924,6 +2038,11 @@ def get_settings(db: Session = Depends(get_db)):
         "whatsapp_phone_number_id": s.whatsapp_phone_number_id,
         "has_whatsapp_access_token": bool(s.whatsapp_access_token),
         "whatsapp_webhook_url": getattr(s, "whatsapp_webhook_url", None) or "",
+        "whatsapp_group_id": getattr(s, "whatsapp_group_id", None) or "",
+        "sms_webhook_url": getattr(s, "sms_webhook_url", None) or "",
+        "telegram_chat_id": getattr(s, "telegram_chat_id", None) or "",
+        "has_telegram_bot_token": bool(getattr(s, "telegram_bot_token", None)),
+        "auto_notify_group_on_events": bool(getattr(s, "auto_notify_group_on_events", True)),
         "notification_templates": s.notification_templates,
     }
 
@@ -1933,7 +2052,7 @@ def update_settings(payload: SettingsUpdate, request: Request, current_user: Use
     s = get_or_create_settings(db)
     data = payload.model_dump(exclude_unset=True)
     for k, v in data.items():
-        if k in ("msg91_auth_key", "whatsapp_access_token") and (v is None or v == ""):
+        if k in ("msg91_auth_key", "whatsapp_access_token", "telegram_bot_token") and (v is None or v == ""):
             continue
         setattr(s, k, v)
     log_audit(db, current_user.id, "UPDATE_SETTINGS", "institution_settings", str(s.id), {"keys": list(data.keys())}, request)

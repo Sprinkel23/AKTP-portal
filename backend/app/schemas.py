@@ -326,6 +326,11 @@ class SettingsUpdate(BaseModel):
     whatsapp_phone_number_id: Optional[str] = None
     whatsapp_access_token: Optional[str] = None
     whatsapp_webhook_url: Optional[str] = None
+    whatsapp_group_id: Optional[str] = None
+    sms_webhook_url: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    auto_notify_group_on_events: Optional[bool] = None
     notification_templates: Optional[dict] = None
 
 
@@ -371,3 +376,31 @@ class StudentSignupRequest(BaseModel):
     student_phone: str = Field(..., min_length=8)
     parent_name: Optional[str] = None
     parent_phone: Optional[str] = None
+
+
+class AllSubjectsColumnConfig(BaseModel):
+    subject_id: int
+    max_marks: float = Field(100, gt=0)
+
+
+class AllSubjectsStudentRow(BaseModel):
+    student_id: int
+    scores: dict[int, float] = {}
+    remarks: Optional[str] = None
+
+
+class TeacherAllSubjectsMarksEntry(BaseModel):
+    examination_id: Optional[int] = None
+    exam_name: Optional[str] = None
+    exam_type: str = "UNIT_TEST"
+    class_id: int
+    exam_date: Optional[date] = None
+    submit_for_approval: bool = True
+    notes: Optional[str] = None
+    subjects: List[AllSubjectsColumnConfig]
+    entries: List[AllSubjectsStudentRow]
+
+
+class GatewayTestRequest(BaseModel):
+    test_phone: Optional[str] = None
+    test_message: Optional[str] = None

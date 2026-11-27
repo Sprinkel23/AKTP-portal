@@ -423,11 +423,12 @@ def run_verification():
         assert any(a["title"] == "Topper Photo News" and (a.get("image_path") or "").startswith("data:image/") for a in pub_home_after["announcements"])
         client.delete(f"/api/admin/announcements/{ann_photo.json()['id']}", headers=auth_header(admin_auth["access_token"]))
 
+        run_tag = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         re_direct = client.post(
             "/api/teacher/marks/direct",
             headers=auth_header(teacher_auth["access_token"]),
             json={
-                "exam_name": "Special Re-Exam Verification",
+                "exam_name": f"Special Re-Exam Verification {run_tag}",
                 "exam_type": "RE_EXAMINATION",
                 "class_id": class10["id"],
                 "subject_id": sci_subj["id"],
@@ -487,7 +488,53 @@ def run_verification():
         assert wm_pdf.status_code == 200 and wm_pdf.content.startswith(b"%PDF")
 
         st_get = client.get("/api/admin/settings", headers=auth_header(admin_auth["access_token"])).json()
-        assert "whatsapp_webhook_url" in st_get
+        assert "whatsapp_webhook_url" in st_get and "whatsapp_group_id" in st_get and "auto_notify_group_on_events" in st_get
+
+        # 10. Teacher All-Subjects Matrix (One Teacher Enters ALL Subjects at Once) + Auto Group Workflow Log
+        matrix_get = client.get(
+            f"/api/teacher/marks/matrix?class_id={class10['id']}",
+            headers=auth_header(teacher_auth["access_token"]),
+        )
+        assert matrix_get.status_code == 200 and len(matrix_get.json()["subjects"]) >= 2
+        math_s = next(s for s in subjects_list if s["code"] == "MATH")
+        matrix_post = client.post(
+            "/api/teacher/marks/bulk-all-subjects",
+            headers=auth_header(teacher_auth["access_token"]),
+            json={
+                "class_id": class10["id"],
+                "exam_name": f"Full All-Subjects Assessment {run_tag}",
+                "exam_type": "UNIT_TEST",
+                "submit_for_approval": True,
+                "subjects": [
+                    {"subject_id": math_s["id"], "max_marks": 100},
+                    {"subject_id": sci_subj["id"], "max_marks": 100},
+                ],
+                "entries": [{
+                    "student_id": student_auth["user"]["student_id"],
+                    "scores": {str(math_s["id"]): 94, str(sci_subj["id"]): 91},
+                    "remarks": "Outstanding in all subjects",
+                }],
+            },
+        )
+        assert matrix_post.status_code == 200, matrix_post.text
+        assert matrix_post.json()["subjects_count"] == 2 and matrix_post.json()["marks_saved"] == 2
+        pub_matrix = client.post(
+            "/api/admin/result-approvals/publish-all",
+            headers=auth_header(admin_auth["access_token"]),
+            json={"examination_id": matrix_post.json()["examination_id"], "send_notifications": True},
+        )
+        assert pub_matrix.status_code == 200
+
+        gw_test = client.post(
+            "/api/admin/notifications/test-gateway",
+            headers=auth_header(admin_auth["access_token"]),
+            json={"test_message": "Auto-workflow check"},
+        )
+        assert gw_test.status_code == 200 and "group_dispatch" in gw_test.json()
+
+        notif_list = client.get("/api/admin/notifications", headers=auth_header(admin_auth["access_token"])).json()
+        group_events = [n for n in notif_list["notifications"] if n["channel"] == "GROUP"]
+        assert len(group_events) >= 3 and "auto_notify_group_on_events" in notif_list["mode"]
 
         # Cleanup test student so seeded state stays tidy
         client.delete(f"/api/admin/students/{new_sid}?hard_delete=true", headers=auth_header(admin_auth["access_token"]))

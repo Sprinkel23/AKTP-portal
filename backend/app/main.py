@@ -19,6 +19,11 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE question_papers ADD COLUMN IF NOT EXISTS watermark_text VARCHAR(120)",
             "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS image_path TEXT",
             "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS whatsapp_webhook_url VARCHAR(512)",
+            "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS whatsapp_group_id VARCHAR(160)",
+            "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS sms_webhook_url VARCHAR(512)",
+            "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS telegram_bot_token VARCHAR(255)",
+            "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(120)",
+            "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS auto_notify_group_on_events BOOLEAN NOT NULL DEFAULT TRUE",
         ):
             conn.execute(text(stmt))
     db = SessionLocal()
