@@ -1,5 +1,5 @@
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -396,6 +396,98 @@ def run_verification():
             headers=auth_header(admin_auth["access_token"]),
         )
         assert r_card.status_code == 200 and r_card.content.startswith(b"%PDF")
+
+        # 9. Photo in News/Announcement, Teacher Direct Re-Exam Marks, Watermark QP PDF, 15-day Result Expiry & Webhook Setting
+        tiny_png = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\rIDATx\x9cc```\xf8\x0f\x00\x01\x04\x01\x00\x1c\x83\xdc=\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        photo_up = client.post(
+            "/api/admin/announcements/upload-photo",
+            headers=auth_header(admin_auth["access_token"]),
+            files={"file": ("news_student.png", tiny_png, "image/png")},
+        )
+        assert photo_up.status_code == 200 and photo_up.json()["image_path"].startswith("data:image/png;base64,")
+        ann_photo = client.post(
+            "/api/admin/announcements",
+            headers=auth_header(admin_auth["access_token"]),
+            json={
+                "title": "Topper Photo News",
+                "category": "NEWS",
+                "content": "Congratulations to AK Tuition topper!",
+                "image_path": photo_up.json()["image_path"],
+            },
+        )
+        assert ann_photo.status_code == 200
+        pub_home_after = client.get("/api/public/home").json()
+        assert any(a["title"] == "Topper Photo News" and (a.get("image_path") or "").startswith("data:image/") for a in pub_home_after["announcements"])
+        client.delete(f"/api/admin/announcements/{ann_photo.json()['id']}", headers=auth_header(admin_auth["access_token"]))
+
+        re_direct = client.post(
+            "/api/teacher/marks/direct",
+            headers=auth_header(teacher_auth["access_token"]),
+            json={
+                "exam_name": "Special Re-Exam Verification",
+                "exam_type": "RE_EXAMINATION",
+                "class_id": class10["id"],
+                "subject_id": sci_subj["id"],
+                "max_marks": 100,
+                "submit_for_approval": True,
+                "entries": [{"student_id": student_auth["user"]["student_id"], "marks_obtained": 89}],
+            },
+        )
+        assert re_direct.status_code == 200, re_direct.text
+        re_ex_id = re_direct.json()["examination_id"]
+        re_pub = client.post(
+            "/api/admin/result-approvals/publish-all",
+            headers=auth_header(admin_auth["access_token"]),
+            json={"examination_id": re_ex_id, "send_notifications": True},
+        )
+        assert re_pub.status_code == 200
+        ann_res = client.get("/api/public/results/announcements").json()
+        re_item = next(x for x in ann_res["declared_exams"] if x["id"] == re_ex_id)
+        assert re_item["days_remaining"] == 15 and re_item["is_expired"] is False
+
+        from app.database import SessionLocal
+        from app.models import Examination
+        db_s = SessionLocal()
+        try:
+            ex_row = db_s.query(Examination).filter(Examination.id == re_ex_id).first()
+            ex_row.results_declared_at = datetime.utcnow() - timedelta(days=16)
+            db_s.commit()
+        finally:
+            db_s.close()
+
+        expired_qr = client.get(f"/api/public/verify-markscard?code={student_auth['user']['student_code']}&exam={re_ex_id}")
+        assert expired_qr.status_code == 410
+        redec = client.post(f"/api/admin/examinations/{re_ex_id}/redeclare", headers=auth_header(admin_auth["access_token"]))
+        assert redec.status_code == 200
+        active_qr = client.get(f"/api/public/verify-markscard?code={student_auth['user']['student_code']}&exam={re_ex_id}")
+        assert active_qr.status_code == 200 and active_qr.json()["verified"] is True
+
+        wm_qp = client.post(
+            "/api/teacher/question-papers",
+            headers=auth_header(teacher_auth["access_token"]),
+            json={
+                "title": "Watermarked Auto Paper",
+                "class_id": class10["id"],
+                "subject_id": sci_subj["id"],
+                "duration_minutes": 45,
+                "total_marks": 5,
+                "watermark_text": "AK TUITION RE-EXAM",
+                "questions": [{
+                    "question_type": "FIVE_MARK",
+                    "question_text": "Derive Ohm law with circuit diagram.",
+                    "marks": 5,
+                }],
+            },
+        )
+        assert wm_qp.status_code == 200
+        wm_pdf = client.get(f"/api/teacher/question-papers/{wm_qp.json()['id']}/pdf", headers=auth_header(teacher_auth["access_token"]))
+        assert wm_pdf.status_code == 200 and wm_pdf.content.startswith(b"%PDF")
+
+        st_get = client.get("/api/admin/settings", headers=auth_header(admin_auth["access_token"])).json()
+        assert "whatsapp_webhook_url" in st_get
 
         # Cleanup test student so seeded state stays tidy
         client.delete(f"/api/admin/students/{new_sid}?hard_delete=true", headers=auth_header(admin_auth["access_token"]))

@@ -48,10 +48,21 @@ export default function TeacherPortal() {
   const [attRows, setAttRows] = useState([]);
 
   // Marks state
+  const [marksMode, setMarksMode] = useState("existing"); // existing | direct
   const [selectedExamSubjId, setSelectedExamSubjId] = useState("");
   const [marksSheet, setMarksSheet] = useState(null);
+  const [directExam, setDirectExam] = useState({
+    exam_name: "",
+    exam_type: "RE_EXAMINATION",
+    class_id: "",
+    subject_id: "",
+    exam_date: new Date().toISOString().slice(0, 10),
+    max_marks: 100,
+  });
+  const [directEntries, setDirectEntries] = useState([]);
 
   // Question Paper state
+  const [autoTopic, setAutoTopic] = useState("");
   const [qpForm, setQpForm] = useState({
     title: "",
     class_id: "",
@@ -61,6 +72,7 @@ export default function TeacherPortal() {
     total_marks: 10,
     evaluation_scheme: "Stepwise marking as per AK Tuition rubric.",
     instructions: "Answer all questions neatly.",
+    watermark_text: "AK TUITION",
     is_online_test: true,
     is_published: true,
     auto_evaluate_mcq: true,
@@ -137,6 +149,91 @@ export default function TeacherPortal() {
   const uniqueClasses = allClasses.length
     ? allClasses.map((c) => ({ id: c.id, name: `${c.name} (${c.section})` }))
     : Array.from(new Map((dash?.assignments || []).map((a) => [a.class_id, { id: a.class_id, name: a.class_name }])).values());
+
+  const handleAutoCreatePaper = () => {
+    const total = Math.max(1, Math.round(Number(qpForm.total_marks) || 20));
+    const subjObj = allSubjects.find((s) => String(s.id) === String(qpForm.subject_id));
+    const topicLabel = (autoTopic || subjObj?.name || "Core Concepts").trim();
+    const generated = [];
+    let remaining = total;
+
+    // 1. Add up to 4 MCQs (1 mark each) when total >= 5
+    const mcqCount = Math.min(4, Math.floor(total * 0.2));
+    for (let i = 1; i <= mcqCount && remaining >= 1; i++) {
+      generated.push({
+        question_type: "MCQ",
+        question_text: `Choose the correct principle regarding ${topicLabel} (Concept ${i}).`,
+        marks: 1,
+        correct_answer: "A",
+        match_pairs: [{ left: "", right: "" }],
+        options: [
+          { option_label: "A", option_text: `Standard property of ${topicLabel}`, is_correct: true },
+          { option_label: "B", option_text: "Inverse relation only", is_correct: false },
+          { option_label: "C", option_text: "Undefined condition", is_correct: false },
+          { option_label: "D", option_text: "None of the above", is_correct: false },
+        ],
+      });
+      remaining -= 1;
+    }
+
+    // 2. Add Fill in the Blanks (1 mark each)
+    const fibCount = Math.min(2, Math.floor(remaining * 0.2));
+    for (let i = 1; i <= fibCount && remaining >= 1; i++) {
+      generated.push({
+        question_type: "FILL_IN_BLANK",
+        question_text: `Fill in the blank: The fundamental law of ${topicLabel} states that ________ (${i}).`,
+        marks: 1,
+        correct_answer: topicLabel,
+        match_pairs: [{ left: "", right: "" }],
+        options: [],
+      });
+      remaining -= 1;
+    }
+
+    // 3. Allocate 5-mark and 2-mark / 1-mark questions cleanly to match total_marks exactly
+    let sec5 = 1;
+    while (remaining >= 7) {
+      generated.push({
+        question_type: "FIVE_MARK",
+        question_text: `Explain in detail with neat steps/derivation on ${topicLabel} — Section Question ${sec5++}.`,
+        marks: 5,
+        correct_answer: "",
+        match_pairs: [{ left: "", right: "" }],
+        options: [],
+      });
+      remaining -= 5;
+    }
+    let sec2 = 1;
+    while (remaining >= 2) {
+      generated.push({
+        question_type: "TWO_MARK",
+        question_text: `Define and illustrate key points on ${topicLabel} (Short Answer ${sec2++}).`,
+        marks: 2,
+        correct_answer: "",
+        match_pairs: [{ left: "", right: "" }],
+        options: [],
+      });
+      remaining -= 2;
+    }
+    if (remaining === 1) {
+      generated.push({
+        question_type: "ONE_MARK",
+        question_text: `State one key application or formula of ${topicLabel}.`,
+        marks: 1,
+        correct_answer: "",
+        match_pairs: [{ left: "", right: "" }],
+        options: [],
+      });
+      remaining -= 1;
+    }
+
+    setQpForm((prev) => ({
+      ...prev,
+      title: prev.title.trim() ? prev.title : `${subjObj?.name || "Subject"} — ${topicLabel} Question Paper`,
+      questions: generated,
+    }));
+    notify(`Auto-created ${generated.length} balanced questions totaling ${total} marks!`);
+  };
 
   const loadAttendanceSheet = async () => {
     if (!attDate) return;
@@ -470,26 +567,211 @@ export default function TeacherPortal() {
       {tab === "marks" && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl p-5 shadow-sm border space-y-4">
-            <h3 className="font-bold text-navy-900">Examination Marks Entry</h3>
-            <p className="text-xs text-slate-600">
-              Submitted marks enter <strong>PENDING</strong> status for Administrator review and approval. Teachers cannot publish official results directly.
-            </p>
-            <select
-              value={selectedExamSubjId}
-              onChange={(e) => loadMarksSheet(e.target.value)}
-              className="rounded-xl border px-3.5 py-2 text-sm min-w-[300px]"
-            >
-              <option value="">Select Assigned Examination & Subject</option>
-              {exams.map((ex) =>
-                ex.subjects.map((es) => (
-                  <option key={es.examination_subject_id} value={es.examination_subject_id}>
-                    {ex.name} ({ex.class_name}) — {es.subject_name} [Max: {es.max_marks}] ({es.approval_status})
-                  </option>
-                ))
-              )}
-            </select>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-navy-900">Examination &amp; Re-Examination Marks Entry</h3>
+                <p className="text-xs text-slate-600">
+                  Select an examination OR directly type an Examination / Re-Examination name. Submitted marks enter <strong>PENDING</strong> status for Admin approval.
+                </p>
+              </div>
+              <div className="inline-flex rounded-xl border p-1 bg-slate-50 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setMarksMode("existing")}
+                  className={`px-3 py-1.5 rounded-lg ${marksMode === "existing" ? "bg-navy-900 text-white" : "text-slate-600"}`}
+                >
+                  Select Examination
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMarksMode("direct")}
+                  className={`px-3 py-1.5 rounded-lg ${marksMode === "direct" ? "bg-navy-900 text-white" : "text-slate-600"}`}
+                >
+                  Type Exam / Re-Exam Name
+                </button>
+              </div>
+            </div>
 
-            {marksSheet && (
+            {marksMode === "direct" ? (
+              <div className="space-y-4 p-4 rounded-xl bg-slate-50 border">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
+                  <input
+                    placeholder="Type Exam / Re-Examination Name (e.g. Maths Re-Exam)"
+                    value={directExam.exam_name}
+                    onChange={(e) => setDirectExam({ ...directExam, exam_name: e.target.value })}
+                    className="sm:col-span-2 rounded-lg border px-3 py-2 bg-white"
+                  />
+                  <select
+                    value={directExam.exam_type}
+                    onChange={(e) => setDirectExam({ ...directExam, exam_type: e.target.value })}
+                    className="rounded-lg border px-3 py-2 bg-white"
+                  >
+                    <option value="RE_EXAMINATION">Re-Examination</option>
+                    <option value="UNIT_TEST">Unit Test</option>
+                    <option value="MID_TERM">Mid-Term Examination</option>
+                    <option value="FINAL_EXAM">Final Examination</option>
+                    <option value="PRACTICE_TEST">Practice Test</option>
+                  </select>
+                  <select
+                    value={directExam.class_id}
+                    onChange={(e) => {
+                      const cid = e.target.value;
+                      setDirectExam({ ...directExam, class_id: cid });
+                      const clsStudents = students.filter((s) => String(s.class_id) === String(cid));
+                      setDirectEntries(clsStudents.map((s) => ({
+                        student_id: s.id,
+                        student_code: s.student_code,
+                        student_name: s.student_name,
+                        marks_obtained: "",
+                        remarks: "",
+                      })));
+                    }}
+                    className="rounded-lg border px-3 py-2 bg-white"
+                  >
+                    <option value="">Select Class</option>
+                    {uniqueClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <select
+                    value={directExam.subject_id}
+                    onChange={(e) => setDirectExam({ ...directExam, subject_id: e.target.value })}
+                    className="rounded-lg border px-3 py-2 bg-white"
+                  >
+                    <option value="">Select Subject</option>
+                    {(allSubjects.length
+                      ? allSubjects
+                      : Array.from(new Map((dash?.assignments || []).map((a) => [a.subject_id, { id: a.subject_id, name: a.subject_name }])).values())
+                    ).map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      value={directExam.exam_date}
+                      onChange={(e) => setDirectExam({ ...directExam, exam_date: e.target.value })}
+                      className="w-1/2 rounded-lg border px-2.5 py-2 bg-white text-xs"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="Max Marks"
+                      value={directExam.max_marks}
+                      onChange={(e) => setDirectExam({ ...directExam, max_marks: e.target.value })}
+                      className="w-1/2 rounded-lg border px-2.5 py-2 bg-white"
+                    />
+                  </div>
+                </div>
+
+                {directEntries.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="overflow-x-auto bg-white rounded-xl border">
+                      <table className="w-full text-sm">
+                        <thead className="bg-navy-900 text-white text-xs uppercase">
+                          <tr>
+                            <th className="p-2.5 text-left">Student ID</th>
+                            <th className="p-2.5 text-left">Name</th>
+                            <th className="p-2.5 text-center">Marks Obtained (Max {directExam.max_marks})</th>
+                            <th className="p-2.5 text-left">Remarks</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {directEntries.map((st, idx) => (
+                            <tr key={st.student_id}>
+                              <td className="p-2.5 font-mono font-bold text-royal-700">{st.student_code}</td>
+                              <td className="p-2.5 font-medium">{st.student_name}</td>
+                              <td className="p-2.5 text-center">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={Number(directExam.max_marks) || 100}
+                                  step="0.5"
+                                  value={st.marks_obtained}
+                                  onChange={(e) => {
+                                    const next = [...directEntries];
+                                    next[idx].marks_obtained = e.target.value;
+                                    setDirectEntries(next);
+                                  }}
+                                  className="w-28 rounded border px-2 py-1 text-center"
+                                />
+                              </td>
+                              <td className="p-2.5">
+                                <input
+                                  value={st.remarks}
+                                  onChange={(e) => {
+                                    const next = [...directEntries];
+                                    next[idx].remarks = e.target.value;
+                                    setDirectEntries(next);
+                                  }}
+                                  placeholder="Optional remarks"
+                                  className="w-full rounded border px-2.5 py-1 text-xs"
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!directExam.exam_name.trim() || !directExam.class_id || !directExam.subject_id) {
+                          notify("Enter Exam / Re-Exam name, Class, and Subject.", "error");
+                          return;
+                        }
+                        const entries = directEntries
+                          .filter((s) => s.marks_obtained !== "" && s.marks_obtained !== null)
+                          .map((s) => ({
+                            student_id: s.student_id,
+                            marks_obtained: Number(s.marks_obtained),
+                            remarks: s.remarks,
+                          }));
+                        if (!entries.length) {
+                          notify("Enter marks for at least one student.", "error");
+                          return;
+                        }
+                        try {
+                          const res = await api.post("/api/teacher/marks/direct", {
+                            exam_name: directExam.exam_name.trim(),
+                            exam_type: directExam.exam_type,
+                            class_id: Number(directExam.class_id),
+                            subject_id: Number(directExam.subject_id),
+                            exam_date: directExam.exam_date || null,
+                            max_marks: Number(directExam.max_marks) || 100,
+                            submit_for_approval: true,
+                            entries,
+                          });
+                          notify(res.data.message);
+                          setDirectExam({ ...directExam, exam_name: "" });
+                          loadAll();
+                        } catch (err) {
+                          notify(err.response?.data?.detail || "Direct marks submission failed.", "error");
+                        }
+                      }}
+                      className="px-6 py-2.5 rounded-xl bg-navy-900 hover:bg-royal-600 text-white text-sm font-bold"
+                    >
+                      Submit {directExam.exam_type === "RE_EXAMINATION" ? "Re-Examination" : "Examination"} Marks for Approval (PENDING)
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <select
+                  value={selectedExamSubjId}
+                  onChange={(e) => loadMarksSheet(e.target.value)}
+                  className="rounded-xl border px-3.5 py-2 text-sm min-w-[300px]"
+                >
+                  <option value="">Select Assigned Examination & Subject</option>
+                  {exams.map((ex) =>
+                    ex.subjects.map((es) => (
+                      <option key={es.examination_subject_id} value={es.examination_subject_id}>
+                        {ex.name} ({ex.class_name}) — {es.subject_name} [Max: {es.max_marks}] ({es.approval_status})
+                      </option>
+                    ))
+                  )}
+                </select>
+
+            {marksMode === "existing" && marksSheet && (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-blue-50 p-3 rounded-xl text-xs">
                   <div>
@@ -580,6 +862,8 @@ export default function TeacherPortal() {
                 )}
               </div>
             )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -638,7 +922,25 @@ export default function TeacherPortal() {
               </select>
               <input type="number" required placeholder="Duration (mins)" value={qpForm.duration_minutes} onChange={(e) => setQpForm({ ...qpForm, duration_minutes: e.target.value })} className="rounded-lg border px-3 py-2" />
               <input type="number" required placeholder="Total Marks" value={qpForm.total_marks} onChange={(e) => setQpForm({ ...qpForm, total_marks: e.target.value })} className="rounded-lg border px-3 py-2" />
-              <input placeholder="Evaluation Scheme" value={qpForm.evaluation_scheme} onChange={(e) => setQpForm({ ...qpForm, evaluation_scheme: e.target.value })} className="sm:col-span-2 rounded-lg border px-3 py-2" />
+              <input placeholder="Watermark Text (e.g. AK TUITION)" value={qpForm.watermark_text || ""} onChange={(e) => setQpForm({ ...qpForm, watermark_text: e.target.value })} className="rounded-lg border px-3 py-2" />
+              <input placeholder="Evaluation Scheme" value={qpForm.evaluation_scheme} onChange={(e) => setQpForm({ ...qpForm, evaluation_scheme: e.target.value })} className="rounded-lg border px-3 py-2" />
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 flex flex-wrap items-center gap-3 text-xs">
+              <div className="font-bold text-navy-900">Automatic Paper Creator:</div>
+              <input
+                placeholder="Enter Chapter / Topic (e.g. Quadratic Equations)"
+                value={autoTopic}
+                onChange={(e) => setAutoTopic(e.target.value)}
+                className="flex-1 min-w-[210px] rounded-lg border px-3 py-1.5 bg-white"
+              />
+              <button
+                type="button"
+                onClick={handleAutoCreatePaper}
+                className="px-4 py-1.5 rounded-lg bg-navy-900 hover:bg-royal-600 text-white font-bold"
+              >
+                Auto-Create {qpForm.total_marks || 10}-Mark Questions
+              </button>
             </div>
 
             <div className="space-y-4">
@@ -823,6 +1125,7 @@ export default function TeacherPortal() {
                   <h4 className="font-bold text-navy-900 text-sm">{p.title}</h4>
                   <div className="text-xs text-slate-500 mt-0.5">
                     {p.class_name} • {p.subject_name} • {p.question_count} Questions • {p.total_marks} Marks ({p.duration_minutes} mins)
+                    {p.watermark_text && <span className="ml-2 text-royal-700 font-semibold">• Watermark: {p.watermark_text}</span>}
                   </div>
                 </div>
                 <button

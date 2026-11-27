@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import GEMINI_API_KEY
 from app.database import get_db
-from app.models import Announcement, Attendance, Examination, Mark, OtpCode, Parent, SchoolClass, Student, Subject, Teacher, User
+from app.models import Announcement, Attendance, Examination, Mark, OtpCode, Parent, ResultApproval, SchoolClass, Student, Subject, Teacher, User
 from app.schemas import (
     AiAssistantRequest,
     ContactInquiryRequest,
@@ -99,6 +99,7 @@ def get_public_home(db: Session = Depends(get_db)):
                 "content": a.content,
                 "event_date": a.event_date.isoformat() if a.event_date else None,
                 "is_featured": a.is_featured,
+                "image_path": a.image_path,
                 "created_at": a.created_at.isoformat(),
             }
             for a in announcements
@@ -143,6 +144,27 @@ def get_public_classes(db: Session = Depends(get_db)):
     ]
 
 
+def _get_result_expiry_info(db: Session, ex: Examination) -> tuple[bool, datetime, datetime, int]:
+    declared_at = getattr(ex, "results_declared_at", None)
+    if not declared_at:
+        ap = (
+            db.query(ResultApproval)
+            .filter(ResultApproval.examination_id == ex.id, ResultApproval.status == "PUBLISHED")
+            .order_by(ResultApproval.approval_date.desc())
+            .first()
+        )
+        declared_at = (ap.approval_date if ap and ap.approval_date else ex.created_at) or datetime.utcnow()
+    expires_at = declared_at + timedelta(days=15)
+    now = datetime.utcnow()
+    is_expired = now > expires_at
+    if is_expired:
+        days_remaining = 0
+    else:
+        delta = expires_at - now
+        days_remaining = max(1, delta.days + (1 if delta.seconds > 0 else 0))
+    return is_expired, declared_at, expires_at, days_remaining
+
+
 @router.get("/verify-markscard")
 def verify_markscard(code: str, exam: Optional[int] = None, db: Session = Depends(get_db)):
     st = db.query(Student).filter(func.lower(Student.student_code) == code.strip().lower()).first()
@@ -157,6 +179,17 @@ def verify_markscard(code: str, exam: Optional[int] = None, db: Session = Depend
     target_exam_id = exam or marks[0].examination_id
     marks = [m for m in marks if m.examination_id == target_exam_id]
     ex = db.query(Examination).filter(Examination.id == target_exam_id).first()
+    if ex:
+        is_expired, declared_at, expires_at, days_remaining = _get_result_expiry_info(db, ex)
+        if is_expired:
+            raise HTTPException(
+                status_code=410,
+                detail="This public result link has expired after the 15-day declaration window. Please log in to the Student or Parent Portal for permanent records.",
+            )
+    else:
+        declared_at = datetime.utcnow()
+        expires_at = declared_at + timedelta(days=15)
+        days_remaining = 15
     settings = get_or_create_settings(db)
     total_max = sum(float(m.max_marks) for m in marks)
     total_obt = sum(float(m.marks_obtained) for m in marks)
@@ -173,6 +206,9 @@ def verify_markscard(code: str, exam: Optional[int] = None, db: Session = Depend
         "section": st.section,
         "examination_id": target_exam_id,
         "examination_name": ex.name if ex else "",
+        "declared_at": declared_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "days_remaining": days_remaining,
         "total_max": total_max,
         "total_obtained": total_obt,
         "percentage": pct,
@@ -312,10 +348,19 @@ def _format_official_result_payload(db: Session, st: Student, target_exam_id: in
     any_fail = any(float(m.marks_obtained) < round(float(m.max_marks) * 0.35) for m in marks)
     div_res = result_division(pct, any_fail)
     rank, class_tot = compute_class_rank(db, ex.id, st.class_id, st.id)
+    is_expired, declared_at, expires_at, days_remaining = _get_result_expiry_info(db, ex)
+    if is_expired:
+        raise HTTPException(
+            status_code=410,
+            detail="This declared result link has expired (15-day public access window ended). Please log in to the Student or Parent Portal for archive access.",
+        )
     dl_token = create_signed_payload({"sid": st.id, "exid": ex.id}, expire_minutes=30)
     return {
         "examination_id": ex.id,
         "examination_name": ex.name,
+        "declared_at": declared_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "days_remaining": days_remaining,
         "exam_date": f"{ex.start_date.strftime('%d %b %Y')} - {ex.end_date.strftime('%d %b %Y')}",
         "academic_year": settings.academic_year_label,
         "student_code": st.student_code,
@@ -378,14 +423,20 @@ def get_announced_results_status(db: Session = Depends(get_db)):
                 "name": ex.name,
                 "class_name": f"{ex.school_class.name} ({ex.school_class.section})" if ex.school_class else "",
                 "exam_date": f"{ex.start_date.strftime('%d %b %Y')}",
+                "is_expired": exp_info[0],
+                "declared_at": exp_info[1].isoformat(),
+                "expires_at": exp_info[2].isoformat(),
+                "days_remaining": exp_info[3],
             }
             for ex in exams
+            for exp_info in [_get_result_expiry_info(db, ex)]
         ],
         "announcements": [
             {
                 "id": a.id,
                 "title": a.title,
                 "content": a.content,
+                "image_path": a.image_path,
                 "created_at": a.created_at.isoformat(),
             }
             for a in result_notices
@@ -445,12 +496,26 @@ def public_result_lookup(payload: PublicResultLookupRequest, db: Session = Depen
     for m in pub_marks:
         if m.examination_id not in exam_ids:
             exam_ids.append(m.examination_id)
-    target_ex_id = payload.examination_id if payload.examination_id in exam_ids else exam_ids[0]
+
+    active_exam_ids = []
     available_exams = []
     for eid in exam_ids:
         ex_obj = db.query(Examination).filter(Examination.id == eid).first()
         if ex_obj:
-            available_exams.append({"id": ex_obj.id, "name": ex_obj.name})
+            exp, _, _, rem = _get_result_expiry_info(db, ex_obj)
+            available_exams.append({"id": ex_obj.id, "name": ex_obj.name, "is_expired": exp, "days_remaining": rem})
+            if not exp:
+                active_exam_ids.append(eid)
+
+    if payload.examination_id and payload.examination_id in exam_ids:
+        target_ex_id = payload.examination_id
+    elif active_exam_ids:
+        target_ex_id = active_exam_ids[0]
+    else:
+        raise HTTPException(
+            status_code=410,
+            detail="Declared public result links for this student have expired after 15 days. Please log in to the Student or Parent Portal for archive access.",
+        )
 
     return {
         "available_examinations": available_exams,
@@ -467,6 +532,12 @@ def download_public_marks_card_pdf(token: str = Query(...), db: Session = Depend
     ex = db.query(Examination).filter(Examination.id == exid).first()
     if not st or not ex:
         raise HTTPException(status_code=404, detail="Marks card record not found.")
+    is_expired, _, _, _ = _get_result_expiry_info(db, ex)
+    if is_expired:
+        raise HTTPException(
+            status_code=410,
+            detail="This public result download link has expired after 15 days. Log in to Student/Parent Portal to download.",
+        )
     marks = (
         db.query(Mark)
         .filter(Mark.student_id == st.id, Mark.examination_id == ex.id, Mark.status == "PUBLISHED")

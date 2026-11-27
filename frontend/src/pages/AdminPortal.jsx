@@ -122,7 +122,7 @@ export default function AdminPortal() {
   });
 
   const [rejectReasonMap, setRejectReasonMap] = useState({});
-  const [annForm, setAnnForm] = useState({ title: "", category: "NOTICE", content: "", event_date: "", target_audience: "PUBLIC", is_featured: false });
+  const [annForm, setAnnForm] = useState({ title: "", category: "NOTICE", content: "", event_date: "", target_audience: "PUBLIC", is_featured: false, image_path: "" });
   const [notifForm, setNotifForm] = useState({ notification_type: "ANNOUNCEMENT", channel: "SMS", class_id: "", message: "" });
   const [reportFilters, setReportFilters] = useState({ class_id: "", student_id: "", examination_id: "", subject_id: "", start_date: "", end_date: "" });
 
@@ -1339,9 +1339,9 @@ export default function AdminPortal() {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              await api.post("/api/admin/announcements", { ...annForm, event_date: annForm.event_date || null });
+              await api.post("/api/admin/announcements", { ...annForm, event_date: annForm.event_date || null, image_path: annForm.image_path || null });
               notify("Announcement published to portal & homepage.");
-              setAnnForm({ title: "", category: "NOTICE", content: "", event_date: "", target_audience: "PUBLIC", is_featured: false });
+              setAnnForm({ title: "", category: "NOTICE", content: "", event_date: "", target_audience: "PUBLIC", is_featured: false, image_path: "" });
               loadAll();
             }}
             className="bg-white rounded-2xl p-5 shadow-sm border space-y-3"
@@ -1362,17 +1362,77 @@ export default function AdminPortal() {
               <input type="date" value={annForm.event_date} onChange={(e) => setAnnForm({ ...annForm, event_date: e.target.value })} className="rounded-lg border px-3 py-2 text-sm" />
             </div>
             <textarea required rows={3} placeholder="Announcement details..." value={annForm.content} onChange={(e) => setAnnForm({ ...annForm, content: e.target.value })} className="w-full rounded-lg border px-3 py-2 text-sm" />
+            <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 border text-xs items-center">
+              <div>
+                <label className="block font-bold text-navy-900 mb-1">Upload News / Event / Student Photo (Optional, max 2 MB)</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const fd = new FormData();
+                      fd.append("file", file);
+                      const res = await api.post("/api/admin/announcements/upload-photo", fd);
+                      setAnnForm((prev) => ({ ...prev, image_path: res.data.image_path }));
+                      notify("News photo attached.");
+                    } catch (err) {
+                      notify(err.response?.data?.detail || "Could not upload photo.", "error");
+                    }
+                  }}
+                  className="text-xs"
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-navy-900 mb-1">Or Select Existing Student Photo</label>
+                <select
+                  value={annForm.image_path && students.some((s) => s.photo_path === annForm.image_path) ? annForm.image_path : ""}
+                  onChange={(e) => setAnnForm((prev) => ({ ...prev, image_path: e.target.value }))}
+                  className="w-full rounded-lg border px-2.5 py-1.5 bg-white"
+                >
+                  <option value="">-- Choose a student photo (optional) --</option>
+                  {students.filter((s) => s.photo_path).map((s) => (
+                    <option key={s.id} value={s.photo_path}>
+                      {s.student_code} - {s.student_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {annForm.image_path && (
+                <div className="sm:col-span-2 flex items-center gap-3 pt-1">
+                  <img src={resolveAssetUrl(annForm.image_path)} alt="Preview" className="w-14 h-14 rounded-xl object-cover border" />
+                  <span className="text-emerald-700 font-semibold">Photo attached to news item</span>
+                  <button
+                    type="button"
+                    onClick={() => setAnnForm((prev) => ({ ...prev, image_path: "" }))}
+                    className="px-2 py-1 rounded bg-red-50 text-red-600 font-semibold"
+                  >
+                    Remove Photo
+                  </button>
+                </div>
+              )}
+            </div>
             <button type="submit" className="px-5 py-2 rounded-xl bg-navy-900 text-white text-sm font-semibold">Publish Announcement</button>
           </form>
 
           <div className="grid md:grid-cols-2 gap-4">
             {announcements.map((a) => (
               <div key={a.id} className="bg-white rounded-2xl p-4 shadow-sm border flex justify-between gap-3">
-                <div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-royal-700">{a.category}</span>
-                  <h4 className="font-bold text-navy-900 mt-1">{a.title}</h4>
-                  <p className="text-xs text-slate-600 mt-1">{a.content}</p>
-                  {a.event_date && <div className="text-[11px] text-slate-400 mt-1">Event Date: {a.event_date}</div>}
+                <div className="flex gap-3 min-w-0">
+                  {a.image_path && (
+                    <img
+                      src={resolveAssetUrl(a.image_path)}
+                      alt={a.title}
+                      className="w-16 h-16 rounded-xl object-cover border shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-royal-700">{a.category}</span>
+                    <h4 className="font-bold text-navy-900 mt-1">{a.title}</h4>
+                    <p className="text-xs text-slate-600 mt-1">{a.content}</p>
+                    {a.event_date && <div className="text-[11px] text-slate-400 mt-1">Event Date: {a.event_date}</div>}
+                  </div>
                 </div>
                 <button
                   onClick={async () => {
@@ -1509,18 +1569,24 @@ export default function AdminPortal() {
               </div>
 
               <div className="p-4 rounded-xl bg-slate-50 border space-y-2 text-xs">
-                <div className="font-bold text-sm text-navy-900">WhatsApp Business Cloud API (Optional Auto-Send)</div>
+                <div className="font-bold text-sm text-navy-900">Automatic WhatsApp / SMS Delivery Gateway</div>
                 <p className="text-[11px] text-slate-500">
-                  Leave blank to use direct 1-click WhatsApp &amp; SMS alerts with your own number, or enter Meta Cloud credentials for automatic API delivery.
+                  Leave blank to use 1-click WhatsApp &amp; SMS alerts from your device, OR add a Webhook URL / Meta Cloud API token below to auto-send directly to parents' WhatsApp numbers when results are declared.
                 </p>
                 <div className="flex gap-4">
                   <label className="inline-flex items-center gap-1.5">
                     <input type="checkbox" checked={settings.whatsapp_enabled} onChange={(e) => setSettings({ ...settings, whatsapp_enabled: e.target.checked })} />
-                    Enable WhatsApp Cloud Auto-Send
+                    Enable WhatsApp Automatic Sending
                   </label>
                 </div>
                 <input
-                  placeholder="WhatsApp Phone Number ID"
+                  placeholder="Optional Auto-Send Webhook URL (e.g. Ultramsg / GreenAPI / Custom)"
+                  value={settings.whatsapp_webhook_url || ""}
+                  onChange={(e) => setSettings({ ...settings, whatsapp_webhook_url: e.target.value })}
+                  className="w-full rounded border px-2.5 py-1.5"
+                />
+                <input
+                  placeholder="WhatsApp Cloud Phone Number ID (if using Meta Cloud)"
                   value={settings.whatsapp_phone_number_id || ""}
                   onChange={(e) => setSettings({ ...settings, whatsapp_phone_number_id: e.target.value })}
                   className="w-full rounded border px-2.5 py-1.5"

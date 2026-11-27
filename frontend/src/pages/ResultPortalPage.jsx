@@ -140,14 +140,20 @@ export default function ResultPortalPage() {
                 <button
                   key={ex.id}
                   type="button"
-                  onClick={() => setSelectedExamId(String(ex.id))}
+                  disabled={ex.is_expired}
+                  onClick={() => !ex.is_expired && setSelectedExamId(String(ex.id))}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
-                    String(selectedExamId) === String(ex.id)
+                    ex.is_expired
+                      ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed line-through"
+                      : String(selectedExamId) === String(ex.id)
                       ? "bg-[#0A2463] text-white border-[#0A2463]"
                       : "bg-emerald-50 text-emerald-900 border-emerald-200 hover:bg-emerald-100"
                   }`}
                 >
-                  DECLARED: {ex.name} ({ex.class_name})
+                  {ex.is_expired ? "EXPIRED (15d ended):" : "DECLARED:"} {ex.name} ({ex.class_name})
+                  {!ex.is_expired && ex.days_remaining != null && (
+                    <span className="ml-1.5 opacity-80">• {ex.days_remaining}d left</span>
+                  )}
                 </button>
               ))}
             </div>
@@ -305,6 +311,11 @@ export default function ResultPortalPage() {
               ) : (
                 <div className="text-sm font-bold text-emerald-800">
                   Official Statement of Marks — Digitally Signed by {result.director_name}
+                  {result.days_remaining != null && (
+                    <span className="ml-2 text-xs font-semibold text-slate-500">
+                      (Public link valid for {result.days_remaining} more day{result.days_remaining === 1 ? "" : "s"})
+                    </span>
+                  )}
                 </div>
               )}
 

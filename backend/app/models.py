@@ -289,6 +289,7 @@ class Examination(Base):
     end_date = Column(Date, nullable=False)
     status = Column(String(24), default="SCHEDULED", nullable=False)  # SCHEDULED, COMPLETED, CANCELLED
     is_timetable_published = Column(Boolean, default=True, nullable=False)
+    results_declared_at = Column(DateTime, nullable=True)
     instructions = Column(Text, nullable=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -331,6 +332,7 @@ class QuestionPaper(Base):
     total_marks = Column(Numeric(6, 2), nullable=False, default=50)
     evaluation_scheme = Column(Text, nullable=True)
     instructions = Column(Text, nullable=True)
+    watermark_text = Column(String(120), nullable=True)
     is_online_test = Column(Boolean, default=True, nullable=False)
     is_published = Column(Boolean, default=False, nullable=False)
     auto_evaluate_mcq = Column(Boolean, default=True, nullable=False)
@@ -540,6 +542,7 @@ class Announcement(Base):
     category = Column(String(48), nullable=False, index=True)
     # EXAM_DATE, TEST_SCHEDULE, HOLIDAY, PARENT_MEETING, ADMISSION, ACADEMIC_EVENT, NOTICE, NEWS
     content = Column(Text, nullable=False)
+    image_path = Column(Text, nullable=True)
     event_date = Column(Date, nullable=True, index=True)
     target_audience = Column(String(32), default="PUBLIC", nullable=False)  # PUBLIC, ALL, STUDENTS, PARENTS, TEACHERS
     is_published = Column(Boolean, default=True, nullable=False)
@@ -589,5 +592,6 @@ class InstitutionSetting(Base):
     whatsapp_enabled = Column(Boolean, default=False, nullable=False)
     whatsapp_phone_number_id = Column(String(64), nullable=True)
     whatsapp_access_token = Column(String(512), nullable=True)
+    whatsapp_webhook_url = Column(String(512), nullable=True)
     notification_templates = Column(JSON, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

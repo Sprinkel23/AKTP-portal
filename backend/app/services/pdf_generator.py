@@ -660,6 +660,7 @@ def generate_question_paper_pdf(
     director_name: str = "G. Akash, B.E.",
     director_designation: str = "Director, AK Tuition",
     signature_path: Optional[str] = None,
+    watermark_text: Optional[str] = None,
 ) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm, bottomMargin=16 * mm)
@@ -748,5 +749,24 @@ def generate_question_paper_pdf(
             avail_w=A4[0] - 36 * mm,
         )
     )
-    doc.build(story)
+
+    wm_label = (watermark_text or "").strip()
+
+    def _draw_qp_watermark(canvas_obj, _doc):
+        if not wm_label:
+            return
+        canvas_obj.saveState()
+        canvas_obj.setFillColor(colors.HexColor("#E2E8F0"))
+        try:
+            canvas_obj.setFillAlpha(0.32)
+        except Exception:
+            pass
+        canvas_obj.translate(A4[0] / 2.0, A4[1] / 2.0)
+        canvas_obj.rotate(38)
+        fsize = 44 if len(wm_label) <= 18 else 32
+        canvas_obj.setFont("Helvetica-Bold", fsize)
+        canvas_obj.drawCentredString(0, 0, wm_label.upper())
+        canvas_obj.restoreState()
+
+    doc.build(story, onFirstPage=_draw_qp_watermark, onLaterPages=_draw_qp_watermark)
     return buf.getvalue()

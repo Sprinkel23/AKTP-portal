@@ -1170,6 +1170,9 @@ def review_result_approval(
         ap.approved_by_user_id = current_user.id
         ap.approval_date = datetime.utcnow()
         ap.rejection_reason = None
+        if ap.examination:
+            ap.examination.status = "RESULTS_DECLARED"
+            ap.examination.results_declared_at = datetime.utcnow()
         for m in marks_rows:
             m.status = "PUBLISHED"
 
@@ -1308,6 +1311,7 @@ def publish_all_pending_results(
                 continue
             declared_exams[ex.id] = ex
             ex.status = "RESULTS_DECLARED"
+            ex.results_declared_at = datetime.utcnow()
             pub_marks = (
                 db.query(Mark)
                 .filter(Mark.examination_id == ex_id, Mark.student_id == st_id, Mark.status == "PUBLISHED")
@@ -1420,6 +1424,27 @@ def publish_all_pending_results(
     }
 
 
+@router.post("/examinations/{exam_id}/redeclare")
+def extend_declared_result_window(
+    exam_id: int,
+    request: Request,
+    current_user: User = Depends(require_roles(["admin"])),
+    db: Session = Depends(get_db),
+):
+    ex = db.query(Examination).filter(Examination.id == exam_id).first()
+    if not ex:
+        raise HTTPException(status_code=404, detail="Examination not found.")
+    ex.status = "RESULTS_DECLARED"
+    ex.results_declared_at = datetime.utcnow()
+    log_audit(db, current_user.id, "REDECLARE_RESULT_LINK", "examination", str(ex.id), {"name": ex.name}, request)
+    db.commit()
+    return {
+        "status": "EXTENDED",
+        "message": f"Public result link for '{ex.name}' re-activated for another 15 days.",
+        "results_declared_at": ex.results_declared_at.isoformat(),
+    }
+
+
 # ---------------- ANNOUNCEMENTS ----------------
 
 @router.get("/announcements")
@@ -1435,10 +1460,29 @@ def list_announcements(db: Session = Depends(get_db)):
             "target_audience": a.target_audience,
             "is_published": a.is_published,
             "is_featured": a.is_featured,
+            "image_path": a.image_path,
             "created_at": a.created_at.isoformat(),
         }
         for a in items
     ]
+
+
+@router.post("/announcements/upload-photo")
+async def upload_announcement_photo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_roles(["admin"])),
+):
+    import base64
+
+    ext = Path(file.filename or "photo.png").suffix.lower() or ".png"
+    if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+        raise HTTPException(status_code=400, detail="Unsupported image format. Use PNG, JPG, WEBP, or GIF.")
+    raw = await file.read()
+    if not raw or len(raw) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image size must be under 2 MB.")
+    mime = "image/jpeg" if ext in {".jpg", ".jpeg"} else f"image/{ext.lstrip('.')}"
+    data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    return {"image_path": data_url}
 
 
 @router.post("/announcements")
@@ -1451,12 +1495,13 @@ def create_announcement(payload: AnnouncementCreate, current_user: User = Depend
         target_audience=payload.target_audience.strip().upper(),
         is_published=payload.is_published,
         is_featured=payload.is_featured,
+        image_path=(payload.image_path or "").strip() or None,
         created_by_user_id=current_user.id,
     )
     db.add(a)
     db.commit()
     db.refresh(a)
-    return {"id": a.id, "title": a.title}
+    return {"id": a.id, "title": a.title, "image_path": a.image_path}
 
 
 @router.delete("/announcements/{ann_id}")
@@ -1878,6 +1923,7 @@ def get_settings(db: Session = Depends(get_db)):
         "whatsapp_enabled": s.whatsapp_enabled,
         "whatsapp_phone_number_id": s.whatsapp_phone_number_id,
         "has_whatsapp_access_token": bool(s.whatsapp_access_token),
+        "whatsapp_webhook_url": getattr(s, "whatsapp_webhook_url", None) or "",
         "notification_templates": s.notification_templates,
     }
 

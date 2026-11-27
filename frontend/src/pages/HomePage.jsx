@@ -18,7 +18,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import api from "../api/client";
+import api, { resolveAssetUrl } from "../api/client";
 
 export default function HomePage() {
   const [data, setData] = useState(null);
@@ -473,12 +473,21 @@ export default function HomePage() {
             </div>
             <div className="space-y-3">
               {(newsItems.length ? newsItems : announcements).slice(0, 4).map((a) => (
-                <div key={a.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-navy-900 text-gold-400">
-                    {a.category.replace("_", " ")}
-                  </span>
-                  <div className="font-bold text-navy-900 text-sm mt-1.5">{a.title}</div>
-                  <p className="text-xs text-slate-600 mt-1">{a.content}</p>
+                <div key={a.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex gap-3 items-start">
+                  {a.image_path && (
+                    <img
+                      src={resolveAssetUrl(a.image_path)}
+                      alt={a.title}
+                      className="w-16 h-16 rounded-xl object-cover border border-slate-200 shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-navy-900 text-gold-400">
+                      {a.category.replace("_", " ")}
+                    </span>
+                    <div className="font-bold text-navy-900 text-sm mt-1.5">{a.title}</div>
+                    <p className="text-xs text-slate-600 mt-1">{a.content}</p>
+                  </div>
                 </div>
               ))}
             </div>
@@ -492,13 +501,22 @@ export default function HomePage() {
             </div>
             <div className="space-y-3">
               {(eventItems.length ? eventItems : announcements).slice(0, 4).map((a) => (
-                <div key={a.id} className="p-3.5 rounded-xl bg-amber-50/60 border border-gold-400/40">
-                  <div className="flex items-center justify-between text-[11px] font-semibold text-gold-600">
-                    <span>{a.category.replace("_", " ")}</span>
-                    {a.event_date && <span>{a.event_date}</span>}
+                <div key={a.id} className="p-3.5 rounded-xl bg-amber-50/60 border border-gold-400/40 flex gap-3 items-start">
+                  {a.image_path && (
+                    <img
+                      src={resolveAssetUrl(a.image_path)}
+                      alt={a.title}
+                      className="w-16 h-16 rounded-xl object-cover border border-gold-400/50 shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-gold-600">
+                      <span>{a.category.replace("_", " ")}</span>
+                      {a.event_date && <span>{a.event_date}</span>}
+                    </div>
+                    <div className="font-bold text-navy-900 text-sm mt-1">{a.title}</div>
+                    <p className="text-xs text-slate-600 mt-1">{a.content}</p>
                   </div>
-                  <div className="font-bold text-navy-900 text-sm mt-1">{a.title}</div>
-                  <p className="text-xs text-slate-600 mt-1">{a.content}</p>
                 </div>
               ))}
             </div>

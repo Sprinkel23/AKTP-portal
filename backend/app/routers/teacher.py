@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -35,6 +36,7 @@ from app.schemas import (
     AttendanceBulkCreate,
     MarksBulkEntry,
     QuestionPaperCreate,
+    TeacherDirectMarksEntry,
     TeacherStudentCreate,
 )
 from app.security import hash_password, log_audit, require_roles
@@ -737,6 +739,147 @@ def save_and_submit_marks(
     }
 
 
+@router.post("/marks/direct")
+def direct_save_and_submit_marks(
+    payload: TeacherDirectMarksEntry,
+    request: Request,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    _get_teacher(current_user, db)
+    clean_name = (payload.exam_name or "").strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Examination or Re-Examination name is required.")
+
+    cls = db.query(SchoolClass).filter(SchoolClass.id == payload.class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Selected class not found.")
+    subj = db.query(Subject).filter(Subject.id == payload.subject_id).first()
+    if not subj:
+        raise HTTPException(status_code=404, detail="Selected subject not found.")
+    if not payload.entries:
+        raise HTTPException(status_code=400, detail="Enter marks for at least one student.")
+
+    ay = db.query(AcademicYear).filter(AcademicYear.is_current == True).first() or db.query(AcademicYear).first()
+    if not ay:
+        raise HTTPException(status_code=400, detail="No active academic year configured.")
+
+    ex = (
+        db.query(Examination)
+        .filter(
+            Examination.class_id == payload.class_id,
+            func.lower(Examination.name) == clean_name.lower(),
+        )
+        .first()
+    )
+    if not ex:
+        ex_date = payload.exam_date or date.today()
+        ex = Examination(
+            name=clean_name,
+            academic_year_id=ay.id,
+            class_id=payload.class_id,
+            exam_type=(payload.exam_type or "RE_EXAMINATION").strip().upper(),
+            start_date=ex_date,
+            end_date=ex_date,
+            status="SCHEDULED",
+            created_by_user_id=current_user.id,
+        )
+        db.add(ex)
+        db.flush()
+
+    es = (
+        db.query(ExaminationSubject)
+        .filter(
+            ExaminationSubject.examination_id == ex.id,
+            ExaminationSubject.subject_id == payload.subject_id,
+        )
+        .first()
+    )
+    if not es:
+        es = ExaminationSubject(
+            examination_id=ex.id,
+            subject_id=payload.subject_id,
+            exam_date=payload.exam_date or date.today(),
+            max_marks=payload.max_marks,
+        )
+        db.add(es)
+        db.flush()
+    else:
+        es.max_marks = payload.max_marks
+
+    ap = db.query(ResultApproval).filter(ResultApproval.examination_subject_id == es.id).order_by(ResultApproval.id.desc()).first()
+    if ap and ap.status == "PUBLISHED":
+        raise HTTPException(status_code=400, detail="Official results are already PUBLISHED by Administrator and cannot be altered by teacher.")
+
+    settings = get_or_create_settings(db)
+    max_m = float(es.max_marks)
+    target_status = "PENDING" if payload.submit_for_approval else "DRAFT"
+    valid_students = {s.id for s in db.query(Student).filter(Student.class_id == ex.class_id, Student.is_active == True).all()}
+
+    for entry in payload.entries:
+        if entry.student_id not in valid_students:
+            raise HTTPException(status_code=400, detail=f"Student {entry.student_id} is not in this class.")
+        if entry.marks_obtained > max_m:
+            raise HTTPException(status_code=400, detail=f"Marks obtained ({entry.marks_obtained}) cannot exceed maximum marks ({max_m}).")
+
+        pct = (entry.marks_obtained / max_m) * 100 if max_m else 0.0
+        grade, auto_rem = compute_grade(pct, settings.grading_rules)
+        existing = (
+            db.query(Mark)
+            .filter(Mark.examination_subject_id == es.id, Mark.student_id == entry.student_id)
+            .first()
+        )
+        if existing:
+            existing.marks_obtained = entry.marks_obtained
+            existing.max_marks = max_m
+            existing.grade = grade
+            existing.remarks = entry.remarks or auto_rem
+            existing.status = target_status
+            existing.entered_by_user_id = current_user.id
+            if payload.submit_for_approval:
+                existing.submitted_at = datetime.utcnow()
+        else:
+            db.add(Mark(
+                examination_id=ex.id,
+                examination_subject_id=es.id,
+                student_id=entry.student_id,
+                subject_id=es.subject_id,
+                max_marks=max_m,
+                marks_obtained=entry.marks_obtained,
+                grade=grade,
+                remarks=entry.remarks or auto_rem,
+                status=target_status,
+                entered_by_user_id=current_user.id,
+                submitted_at=datetime.utcnow() if payload.submit_for_approval else None,
+            ))
+
+    if payload.submit_for_approval:
+        if ap:
+            ap.status = "PENDING"
+            ap.submitted_by_user_id = current_user.id
+            ap.submitted_date = datetime.utcnow()
+            ap.rejection_reason = None
+            ap.notes = payload.notes
+        else:
+            db.add(ResultApproval(
+                examination_id=ex.id,
+                examination_subject_id=es.id,
+                submitted_by_user_id=current_user.id,
+                submitted_date=datetime.utcnow(),
+                status="PENDING",
+                notes=payload.notes,
+            ))
+
+    log_audit(db, current_user.id, "DIRECT_SUBMIT_MARKS", "marks", str(es.id), {"exam_name": ex.name, "count": len(payload.entries)}, request)
+    db.commit()
+    return {
+        "status": target_status,
+        "examination_id": ex.id,
+        "examination_subject_id": es.id,
+        "message": f"Marks for '{ex.name}' submitted for Administrator approval (status: PENDING)." if payload.submit_for_approval else f"Marks for '{ex.name}' saved as draft.",
+    }
+
+
 # ---------------- QUESTION PAPERS & ONLINE PRACTICE TESTS ----------------
 
 @router.get("/question-papers")
@@ -754,6 +897,7 @@ def list_question_papers(current_user: User = Depends(require_roles(["teacher"])
             "examination_id": qp.examination_id,
             "duration_minutes": qp.duration_minutes,
             "total_marks": float(qp.total_marks),
+            "watermark_text": qp.watermark_text,
             "question_count": len(qp.questions),
             "is_online_test": qp.is_online_test,
             "is_published": qp.is_published,
@@ -807,6 +951,7 @@ def create_question_paper(
         total_marks=payload.total_marks,
         evaluation_scheme=payload.evaluation_scheme,
         instructions=payload.instructions,
+        watermark_text=(payload.watermark_text or "").strip() or None,
         is_online_test=payload.is_online_test,
         is_published=payload.is_published,
         auto_evaluate_mcq=payload.auto_evaluate_mcq,
@@ -869,6 +1014,7 @@ def download_question_paper_pdf(
         director_name=settings.director_name,
         director_designation=settings.director_designation,
         signature_path=settings.director_signature_path,
+        watermark_text=qp.watermark_text,
         questions=[
             {
                 "question_type": q.question_type,

@@ -28,7 +28,7 @@ api.interceptors.response.use(
 
 export function resolveAssetUrl(path) {
   if (!path) return "/ak-tuition-logo.png";
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("data:")) return path;
   if (path === "/assets/ak-tuition-logo.png") return "/ak-tuition-logo.png";
   return `${API_BASE_URL}${path}`;
 }

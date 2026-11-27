@@ -143,7 +143,7 @@ def send_notification(
                 status_val = "FAILED"
                 error_detail = f"WhatsApp Cloud request failed: {exc}"
         else:
-            webhook_url = WHATSAPP_WEBHOOK_URL.strip()
+            webhook_url = (getattr(settings, "whatsapp_webhook_url", None) or WHATSAPP_WEBHOOK_URL or "").strip()
             if webhook_url:
                 provider_val = "WHATSAPP_WEBHOOK"
                 try:

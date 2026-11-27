@@ -184,6 +184,18 @@ class MarksBulkEntry(BaseModel):
     entries: List[MarkEntryItem]
 
 
+class TeacherDirectMarksEntry(BaseModel):
+    exam_name: str = Field(..., min_length=2)
+    class_id: int
+    subject_id: int
+    exam_date: Optional[date] = None
+    max_marks: float = Field(100, gt=0)
+    exam_type: str = "RE_EXAMINATION"
+    submit_for_approval: bool = True
+    notes: Optional[str] = None
+    entries: List[MarkEntryItem]
+
+
 class ResultApprovalAction(BaseModel):
     action: str  # APPROVE or REJECT
     rejection_reason: Optional[str] = None
@@ -240,6 +252,7 @@ class QuestionPaperCreate(BaseModel):
     total_marks: float = Field(..., gt=0)
     evaluation_scheme: Optional[str] = None
     instructions: Optional[str] = None
+    watermark_text: Optional[str] = None
     is_online_test: bool = True
     is_published: bool = True
     auto_evaluate_mcq: bool = True
@@ -272,6 +285,7 @@ class AnnouncementCreate(BaseModel):
     title: str
     category: str
     content: str
+    image_path: Optional[str] = None
     event_date: Optional[date] = None
     target_audience: str = "PUBLIC"
     is_published: bool = True
@@ -311,6 +325,7 @@ class SettingsUpdate(BaseModel):
     whatsapp_enabled: Optional[bool] = None
     whatsapp_phone_number_id: Optional[str] = None
     whatsapp_access_token: Optional[str] = None
+    whatsapp_webhook_url: Optional[str] = None
     notification_templates: Optional[dict] = None
 
 

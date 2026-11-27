@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app.config import ASSETS_DIR, CORS_ORIGINS, UPLOADS_DIR
 from app.database import Base, SessionLocal, engine
@@ -12,6 +13,14 @@ from app.seed import seed_database
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        for stmt in (
+            "ALTER TABLE examinations ADD COLUMN IF NOT EXISTS results_declared_at TIMESTAMP",
+            "ALTER TABLE question_papers ADD COLUMN IF NOT EXISTS watermark_text VARCHAR(120)",
+            "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS image_path TEXT",
+            "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS whatsapp_webhook_url VARCHAR(512)",
+        ):
+            conn.execute(text(stmt))
     db = SessionLocal()
     try:
         seed_database(db)
