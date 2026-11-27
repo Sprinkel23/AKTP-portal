@@ -34,6 +34,7 @@ import {
   KeyRound,
   Copy,
   HelpCircle,
+  Landmark,
 } from "lucide-react";
 import PortalLayout from "../components/PortalLayout";
 import api, { downloadAuthorizedFile, resolveAssetUrl } from "../api/client";
@@ -105,7 +106,7 @@ export default function AdminPortal() {
   const [assignForm, setAssignForm] = useState({ teacher_id: "", class_id: "", subject_id: "", is_class_teacher: false });
   const [tAttForm, setTAttForm] = useState({ teacher_id: "", attendance_date: new Date().toISOString().slice(0, 10), status: "PRESENT", remarks: "" });
 
-  const [classForm, setClassForm] = useState({ grade_level: 1, name: "Class 1", section: "B", capacity: 40, tuition_fee: 11000 });
+  const [classForm, setClassForm] = useState({ grade_level: 1, name: "Class 1", section: "B", capacity: 40, tuition_fee: 0 });
   const [subjectForm, setSubjectForm] = useState({ name: "", code: "", description: "" });
   const [classSubjForm, setClassSubjForm] = useState({ class_id: "", subject_ids: [] });
 
@@ -127,6 +128,19 @@ export default function AdminPortal() {
   const [testGatewayPhone, setTestGatewayPhone] = useState("");
   const [feeData, setFeeData] = useState({ student_fees: [], pending_collections: [], payments: [] });
   const [feeDispatches, setFeeDispatches] = useState([]);
+  const [salaryData, setSalaryData] = useState({ teachers: [], payouts: [] });
+  const [salaryForm, setSalaryForm] = useState({
+    teacher_id: "",
+    payout_id: null,
+    month_label: new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+    base_salary: "",
+    bonus: "0",
+    deductions: "0",
+    payment_mode: "BANK_TRANSFER",
+    transaction_reference: "",
+    remarks: "",
+  });
+  const [lastSalaryResult, setLastSalaryResult] = useState(null);
   const [annForm, setAnnForm] = useState({ title: "", category: "NOTICE", content: "", event_date: "", target_audience: "PUBLIC", is_featured: false, image_path: "" });
   const [notifForm, setNotifForm] = useState({ notification_type: "ANNOUNCEMENT", channel: "SMS", class_id: "", message: "" });
   const [reportFilters, setReportFilters] = useState({ class_id: "", student_id: "", examination_id: "", subject_id: "", start_date: "", end_date: "" });
@@ -138,7 +152,7 @@ export default function AdminPortal() {
 
   const loadAll = async () => {
     try {
-      const [dRes, sRes, tRes, cRes, subRes, exRes, apRes, anRes, nRes, setRes, fRes] = await Promise.all([
+      const [dRes, sRes, tRes, cRes, subRes, exRes, apRes, anRes, nRes, setRes, fRes, salRes] = await Promise.all([
         api.get("/api/admin/dashboard"),
         api.get("/api/admin/students"),
         api.get("/api/admin/teachers"),
@@ -150,6 +164,7 @@ export default function AdminPortal() {
         api.get("/api/admin/notifications"),
         api.get("/api/admin/settings"),
         api.get("/api/admin/fees").catch(() => ({ data: { student_fees: [], pending_collections: [], payments: [] } })),
+        api.get("/api/admin/salaries").catch(() => ({ data: { teachers: [], payouts: [] } })),
       ]);
       setDash(dRes.data);
       setStudents(sRes.data);
@@ -162,6 +177,7 @@ export default function AdminPortal() {
       setNotifData(nRes.data);
       setSettings(setRes.data);
       setFeeData(fRes.data || { student_fees: [], pending_collections: [], payments: [] });
+      setSalaryData(salRes.data || { teachers: [], payouts: [] });
     } catch (e) {
       notify(e.response?.data?.detail || "Error loading admin data", "error");
     }
@@ -182,6 +198,7 @@ export default function AdminPortal() {
 
   const pendingCount = approvals.filter((a) => a.status === "PENDING").length;
   const pendingFeeCount = (feeData.pending_collections || []).length;
+  const pendingSalaryCount = (salaryData.payouts || []).filter((p) => p.status === "PENDING").length;
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -191,6 +208,7 @@ export default function AdminPortal() {
     { id: "examinations", label: "Examinations", icon: Calendar },
     { id: "approvals", label: "Result Approvals", icon: CheckSquare, badge: pendingCount },
     { id: "fees", label: "Fee Approvals & Receipts", icon: IndianRupee, badge: pendingFeeCount },
+    { id: "salaries", label: "Faculty Salaries", icon: Landmark, badge: pendingSalaryCount },
     { id: "notifications", label: "WhatsApp & SMS Alerts", icon: Bell },
     { id: "announcements", label: "News & Notices", icon: Megaphone },
     { id: "reports", label: "PDF & Excel Reports", icon: FileSpreadsheet },
@@ -1102,6 +1120,264 @@ export default function AdminPortal() {
                         <a href={p.whatsapp_url} target="_blank" rel="noreferrer" className="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold">
                           WhatsApp PDF
                         </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* FACULTY SALARIES & BANK PAYOUTS */}
+      {tab === "salaries" && (
+        <div className="space-y-6">
+          {lastSalaryResult && (
+            <div className="bg-emerald-50 border border-emerald-300 rounded-lg p-4 space-y-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-bold text-emerald-900 text-sm">
+                  {lastSalaryResult.message}
+                </div>
+                <button onClick={() => setLastSalaryResult(null)} className="text-slate-500 hover:underline">Dismiss</button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadAuthorizedFile(`/api/admin/salaries/${lastSalaryResult.id}/slip-pdf`, `AK_SalarySlip_${lastSalaryResult.id}.pdf`)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-navy-900 text-white font-bold"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download Salary Slip PDF
+                </button>
+                {lastSalaryResult.upi_pay_url && (
+                  <a href={lastSalaryResult.upi_pay_url} className="inline-flex items-center px-3 py-1.5 rounded bg-amber-600 text-white font-bold">
+                    Open UPI App to Transfer
+                  </a>
+                )}
+                {lastSalaryResult.dispatches?.[0]?.sms_url && (
+                  <a href={lastSalaryResult.dispatches[0].sms_url} className="inline-flex items-center px-3 py-1.5 rounded bg-royal-600 text-white font-bold">
+                    Send Slip via SMS
+                  </a>
+                )}
+                {lastSalaryResult.dispatches?.[0]?.whatsapp_url && (
+                  <a href={lastSalaryResult.dispatches[0].whatsapp_url} target="_blank" rel="noreferrer" className="inline-flex items-center px-3 py-1.5 rounded bg-emerald-700 text-white font-bold">
+                    Send Slip via WhatsApp
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                const res = await api.post("/api/admin/salaries/pay", {
+                  ...salaryForm,
+                  teacher_id: Number(salaryForm.teacher_id),
+                  payout_id: salaryForm.payout_id ? Number(salaryForm.payout_id) : null,
+                  base_salary: Number(salaryForm.base_salary) || 0,
+                  bonus: Number(salaryForm.bonus) || 0,
+                  deductions: Number(salaryForm.deductions) || 0,
+                });
+                setLastSalaryResult(res.data);
+                notify(res.data.message);
+                setSalaryForm({
+                  teacher_id: "",
+                  payout_id: null,
+                  month_label: new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+                  base_salary: "",
+                  bonus: "0",
+                  deductions: "0",
+                  payment_mode: "BANK_TRANSFER",
+                  transaction_reference: "",
+                  remarks: "",
+                });
+                loadAll();
+              } catch (err) {
+                notify(err.response?.data?.detail || "Salary payout failed.", "error");
+              }
+            }}
+            className="bg-white rounded-lg p-5 shadow-sm border border-slate-300 space-y-4"
+          >
+            <div>
+              <h3 className="font-bold text-navy-900 text-base">Send Teacher Salary Through Portal</h3>
+              <p className="text-xs text-slate-600">
+                Select a teacher (or click Pay Salary on any row below) to verify their bank details, issue the Official Salary Slip PDF, and send confirmation via SMS/WhatsApp.
+              </p>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+              <select
+                required
+                value={salaryForm.teacher_id}
+                onChange={(e) => setSalaryForm({ ...salaryForm, teacher_id: e.target.value, payout_id: null })}
+                className="sm:col-span-2 rounded border border-slate-300 px-3 py-2 bg-white font-semibold"
+              >
+                <option value="">Select Faculty Member *</option>
+                {(salaryData.teachers || []).map((t) => (
+                  <option key={t.teacher_id} value={t.teacher_id}>
+                    {t.teacher_code} - {t.teacher_name} ({t.has_bank_details ? `${t.bank_name || "UPI"}: ${t.bank_account_number || t.upi_id}` : "Bank Not Submitted Yet"})
+                  </option>
+                ))}
+              </select>
+              <input
+                required
+                placeholder="Salary Month (e.g. November 2026)"
+                value={salaryForm.month_label}
+                onChange={(e) => setSalaryForm({ ...salaryForm, month_label: e.target.value })}
+                className="rounded border border-slate-300 px-3 py-2"
+              />
+              <select
+                value={salaryForm.payment_mode}
+                onChange={(e) => setSalaryForm({ ...salaryForm, payment_mode: e.target.value })}
+                className="rounded border border-slate-300 px-3 py-2 bg-white"
+              >
+                <option value="BANK_TRANSFER">Bank Transfer</option>
+                <option value="NEFT">NEFT</option>
+                <option value="IMPS">IMPS</option>
+                <option value="UPI">UPI</option>
+                <option value="CASH">Cash</option>
+              </select>
+              <input
+                type="number"
+                required
+                min={0}
+                placeholder="Base Salary (Rs.) *"
+                value={salaryForm.base_salary}
+                onChange={(e) => setSalaryForm({ ...salaryForm, base_salary: e.target.value })}
+                className="rounded border border-slate-300 px-3 py-2 font-semibold"
+              />
+              <input
+                type="number"
+                min={0}
+                placeholder="Bonus (Rs.)"
+                value={salaryForm.bonus}
+                onChange={(e) => setSalaryForm({ ...salaryForm, bonus: e.target.value })}
+                className="rounded border border-slate-300 px-3 py-2"
+              />
+              <input
+                type="number"
+                min={0}
+                placeholder="Deductions (Rs.)"
+                value={salaryForm.deductions}
+                onChange={(e) => setSalaryForm({ ...salaryForm, deductions: e.target.value })}
+                className="rounded border border-slate-300 px-3 py-2"
+              />
+              <input
+                placeholder="UTR / Transaction Ref"
+                value={salaryForm.transaction_reference}
+                onChange={(e) => setSalaryForm({ ...salaryForm, transaction_reference: e.target.value })}
+                className="rounded border border-slate-300 px-3 py-2 font-mono"
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm font-bold text-navy-900">
+                Net Payout: Rs.{" "}
+                {Math.max(
+                  0,
+                  Number(salaryForm.base_salary || 0) + Number(salaryForm.bonus || 0) - Number(salaryForm.deductions || 0)
+                ).toLocaleString()}
+              </div>
+              <button type="submit" className="px-6 py-2 rounded bg-navy-900 hover:bg-royal-600 text-white text-sm font-bold">
+                Send Salary &amp; Issue Slip PDF
+              </button>
+            </div>
+          </form>
+
+          <div className="bg-white rounded-lg shadow-sm border border-slate-300 overflow-x-auto">
+            <div className="p-4 border-b font-bold text-navy-900 text-sm">Faculty Bank Details Directory &amp; Pending Salary Requests</div>
+            <table className="w-full text-xs">
+              <thead className="bg-navy-900 text-white uppercase">
+                <tr>
+                  <th className="p-3 text-left">Teacher</th>
+                  <th className="p-3 text-left">Bank / Holder</th>
+                  <th className="p-3 text-left">Account / IFSC / UPI</th>
+                  <th className="p-3 text-center">Pending Request</th>
+                  <th className="p-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {(salaryData.teachers || []).map((t) => (
+                  <tr key={t.teacher_id}>
+                    <td className="p-3 font-semibold">{t.teacher_code} - {t.teacher_name}</td>
+                    <td className="p-3">{t.bank_name || "-"} {t.bank_account_holder ? `(${t.bank_account_holder})` : ""}</td>
+                    <td className="p-3 font-mono">
+                      {t.bank_account_number ? `${t.bank_account_number} / ${t.bank_ifsc}` : "No bank saved"}
+                      {t.upi_id && <div className="text-royal-700">UPI: {t.upi_id}</div>}
+                    </td>
+                    <td className="p-3 text-center">
+                      {t.pending_request_id ? (
+                        <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">
+                          {t.pending_month}: Rs. {t.pending_amount?.toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">None</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSalaryForm((prev) => ({
+                            ...prev,
+                            teacher_id: String(t.teacher_id),
+                            payout_id: t.pending_request_id || null,
+                            month_label: t.pending_month || prev.month_label,
+                            base_salary: t.pending_amount ? String(t.pending_amount) : prev.base_salary,
+                            payment_mode: t.bank_account_number ? "BANK_TRANSFER" : t.upi_id ? "UPI" : "CASH",
+                          }))
+                        }
+                        className="px-3 py-1 rounded bg-emerald-700 text-white font-bold"
+                      >
+                        Select &amp; Pay
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-sm border border-slate-300 overflow-x-auto">
+            <div className="p-4 border-b font-bold text-navy-900 text-sm">Processed Salary Payout Ledger</div>
+            <table className="w-full text-xs">
+              <thead className="bg-slate-100 uppercase">
+                <tr>
+                  <th className="p-3 text-left">Slip No</th>
+                  <th className="p-3 text-left">Teacher</th>
+                  <th className="p-3 text-left">Month</th>
+                  <th className="p-3 text-center">Net Paid</th>
+                  <th className="p-3 text-center">Mode / UTR</th>
+                  <th className="p-3 text-center">Status</th>
+                  <th className="p-3 text-right">Slip PDF / Notify</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {(salaryData.payouts || []).map((p) => (
+                  <tr key={p.id}>
+                    <td className="p-3 font-mono font-bold text-royal-700">{p.slip_number || "-"}</td>
+                    <td className="p-3 font-semibold">{p.teacher_code} - {p.teacher_name}</td>
+                    <td className="p-3">{p.month_label}</td>
+                    <td className="p-3 text-center font-bold">Rs. {p.net_amount.toLocaleString()}</td>
+                    <td className="p-3 text-center">{p.payment_mode} {p.transaction_reference ? `(${p.transaction_reference})` : ""}</td>
+                    <td className="p-3 text-center">
+                      <span className={`px-2 py-0.5 rounded font-bold ${p.status === "PAID" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                        {p.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                      {p.status === "PAID" && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => downloadAuthorizedFile(`/api/admin/salaries/${p.id}/slip-pdf`, `AK_SalarySlip_${p.id}.pdf`)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-navy-900 text-white font-bold"
+                          >
+                            <Download className="w-3.5 h-3.5" /> Slip PDF
+                          </button>
+                          {p.sms_url && <a href={p.sms_url} className="px-2 py-1 rounded bg-royal-600 text-white font-bold">SMS</a>}
+                          {p.whatsapp_url && <a href={p.whatsapp_url} target="_blank" rel="noreferrer" className="px-2 py-1 rounded bg-emerald-600 text-white font-bold">WhatsApp</a>}
+                        </>
                       )}
                     </td>
                   </tr>

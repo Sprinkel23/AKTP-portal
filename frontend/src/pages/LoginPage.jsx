@@ -9,29 +9,29 @@ const PORTAL_META = {
     label: "Administrator Portal",
     icon: Shield,
     placeholder: "Enter Admin Username",
-    accent: "bg-navy-900 text-gold-400",
-    hint: "Complete system, student, teacher, exam & result approval control.",
+    accent: "bg-[#081B4B] text-gold-400",
+    hint: "Institutional governance, faculty payroll, fee verification & result publication.",
   },
   teacher: {
-    label: "Teacher Portal",
+    label: "Faculty Portal",
     icon: BookOpenCheck,
     placeholder: "Enter Teacher Username",
-    accent: "bg-royal-600 text-white",
-    hint: "Daily attendance, marks entry, question papers & practice test evaluation.",
+    accent: "bg-[#0A2463] text-white",
+    hint: "Attendance register, subject-wise marks entry, fee collection & salary slips.",
   },
   student: {
     label: "Student Portal",
     icon: GraduationCap,
     placeholder: "Student ID (e.g. AK001) or Username",
-    accent: "bg-emerald-700 text-white",
-    hint: "View timetable, take practice tests, check attendance & download marks cards.",
+    accent: "bg-[#0A2463] text-white",
+    hint: "Examination schedules, practice tests, attendance & verified marks cards.",
   },
   parent: {
     label: "Parent Portal",
     icon: Users,
-    placeholder: "Enter Parent Username",
-    accent: "bg-amber-600 text-white",
-    hint: "Monitor your child's attendance, absent dates, exams & published results.",
+    placeholder: "Enter Parent Username or Mobile",
+    accent: "bg-[#0A2463] text-white",
+    hint: "Student attendance monitoring, verified receipts & published results.",
   },
 };
 
@@ -115,165 +115,169 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-navy-950 via-navy-900 to-royal-700 flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-lg mb-4 flex items-center justify-between text-white">
-        <Link to="/" className="inline-flex items-center gap-2.5 hover:opacity-90 transition">
-          <img src="/ak-tuition-logo.png" alt="AK Tuition Logo" className="w-11 h-11 object-contain" />
-          <div>
-            <div className="font-display font-extrabold text-base leading-tight">AK TUITION</div>
-            <div className="text-[11px] text-gold-400 font-medium">Learn • Practise • Achieve</div>
-          </div>
-        </Link>
-        <Link to="/" className="inline-flex items-center gap-1.5 text-xs text-blue-200 hover:text-gold-400 font-medium">
-          <ArrowLeft className="w-4 h-4" /> Back to Home
-        </Link>
+    <div className="min-h-screen bg-[#eef2f6] flex flex-col">
+      <div className="bg-[#081B4B] text-white border-b-2 border-[#C9A227]">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+          <Link to="/" className="inline-flex items-center gap-3 hover:opacity-90 transition">
+            <img src="/ak-tuition-logo.png" alt="AK Tuition Logo" className="w-10 h-10 object-contain" />
+            <div>
+              <div className="font-bold text-base tracking-wide leading-tight">AK TUITION — INSTITUTIONAL PORTAL</div>
+              <div className="text-[11px] text-gold-400 uppercase tracking-widest">Authorized Personnel &amp; Student Access</div>
+            </div>
+          </Link>
+          <Link to="/" className="inline-flex items-center gap-1.5 text-xs text-slate-200 hover:text-gold-400 font-semibold border border-white/20 px-3 py-1.5 rounded">
+            <ArrowLeft className="w-3.5 h-3.5" /> Portal Home
+          </Link>
+        </div>
       </div>
 
-      <div className="max-w-lg w-full bg-white rounded-3xl shadow-2xl p-6 sm:p-8">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
-          {Object.entries(PORTAL_META).map(([key, item]) => {
-            const TabIcon = item.icon;
-            const active = selectedRole === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => {
-                  setSelectedRole(key);
-                  setError("");
-                  setMode("login");
-                }}
-                className={`flex flex-col items-center gap-1 py-2.5 px-2 rounded-xl text-xs font-bold border transition ${
-                  active
-                    ? "bg-navy-900 text-white border-navy-900 shadow"
-                    : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50"
-                }`}
-              >
-                <TabIcon className={`w-4 h-4 ${active ? "text-gold-400" : "text-royal-600"}`} />
-                <span className="capitalize">{key}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="flex items-center gap-3 mb-5">
-          <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${meta.accent}`}>
-            <Icon className="w-5 h-5" />
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="max-w-lg w-full bg-white rounded-lg border border-slate-300 border-t-4 border-t-[#0A2463] shadow-lg p-6 sm:p-8">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
+            {Object.entries(PORTAL_META).map(([key, item]) => {
+              const TabIcon = item.icon;
+              const active = selectedRole === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedRole(key);
+                    setError("");
+                    setMode("login");
+                  }}
+                  className={`flex flex-col items-center gap-1 py-2.5 px-2 rounded text-xs font-bold border transition ${
+                    active
+                      ? "bg-[#0A2463] text-white border-[#0A2463]"
+                      : "bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100"
+                  }`}
+                >
+                  <TabIcon className={`w-4 h-4 ${active ? "text-gold-400" : "text-[#0A2463]"}`} />
+                  <span className="capitalize">{key}</span>
+                </button>
+              );
+            })}
           </div>
-          <div>
-            <h2 className="font-display font-bold text-xl text-navy-900">{meta.label}</h2>
-            <p className="text-xs text-slate-500">{meta.hint}</p>
+
+          <div className="flex items-center gap-3 mb-5 pb-4 border-b border-slate-200">
+            <div className={`w-10 h-10 rounded flex items-center justify-center shrink-0 ${meta.accent}`}>
+              <Icon className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-bold text-lg text-[#0A2463]">{meta.label}</h2>
+              <p className="text-xs text-slate-500">{meta.hint}</p>
+            </div>
           </div>
-        </div>
 
-        {error && <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 font-medium">{error}</div>}
-        {infoMsg && <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-medium break-all">{infoMsg}</div>}
+          {error && <div className="mb-4 p-3 rounded bg-red-50 border border-red-200 text-xs text-red-700 font-medium">{error}</div>}
+          {infoMsg && <div className="mb-4 p-3 rounded bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-medium break-all">{infoMsg}</div>}
 
-        {mode === "login" && (
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
-                {selectedRole === "student" ? "Student ID or Username" : "Username or Email"}
-              </label>
-              <input
-                required
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-royal-500 outline-none"
-                placeholder={meta.placeholder}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Password</label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-royal-500 outline-none"
-                placeholder="Enter your password"
-              />
-            </div>
-            <div className="flex items-center justify-between text-xs">
+          {mode === "login" && (
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+                  {selectedRole === "student" ? "Student ID or Username" : "Username or Email"}
+                </label>
+                <input
+                  required
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-3.5 py-2.5 text-sm focus:border-[#0A2463] outline-none"
+                  placeholder={meta.placeholder}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">Password</label>
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-3.5 py-2.5 text-sm focus:border-[#0A2463] outline-none"
+                  placeholder="Enter your password"
+                />
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("forgot");
+                    setError("");
+                    setInfoMsg("");
+                  }}
+                  className="text-[#0A2463] hover:underline font-semibold inline-flex items-center gap-1"
+                >
+                  <KeyRound className="w-3.5 h-3.5" /> Forgot Password?
+                </button>
+              </div>
               <button
-                type="button"
-                onClick={() => {
-                  setMode("forgot");
-                  setError("");
-                  setInfoMsg("");
-                }}
-                className="text-royal-600 hover:underline font-semibold inline-flex items-center gap-1"
+                type="submit"
+                disabled={submitting}
+                className="w-full py-2.5 rounded bg-[#0A2463] hover:bg-[#102F7A] text-white font-bold text-sm transition disabled:opacity-60"
               >
-                <KeyRound className="w-3.5 h-3.5" /> Forgot Password?
+                {submitting ? "Verifying Credentials..." : `Sign in to ${meta.label}`}
               </button>
-            </div>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full py-3 rounded-xl bg-navy-900 hover:bg-royal-600 text-white font-bold text-sm transition shadow-md disabled:opacity-60"
-            >
-              {submitting ? "Signing in..." : `Sign in to ${meta.label}`}
-            </button>
-          </form>
-        )}
+            </form>
+          )}
 
-        {mode === "forgot" && (
-          <form onSubmit={handleForgot} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
-                Enter your Username, Student ID, or Email
-              </label>
-              <input
-                required
-                value={resetIdentifier}
-                onChange={(e) => setResetIdentifier(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm"
-                placeholder="Username, Student ID, or Email"
-              />
-            </div>
-            <div className="flex gap-2">
-              <button type="submit" className="px-5 py-2.5 rounded-xl bg-navy-900 text-white text-sm font-bold">
-                Generate Reset Token
-              </button>
-              <button type="button" onClick={() => setMode("login")} className="px-4 py-2.5 rounded-xl border text-sm">
-                Back to Login
-              </button>
-            </div>
-          </form>
-        )}
+          {mode === "forgot" && (
+            <form onSubmit={handleForgot} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Enter your Username, Student ID, or Email
+                </label>
+                <input
+                  required
+                  value={resetIdentifier}
+                  onChange={(e) => setResetIdentifier(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-3.5 py-2.5 text-sm"
+                  placeholder="Username, Student ID, or Email"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button type="submit" className="px-5 py-2.5 rounded bg-[#0A2463] text-white text-sm font-bold">
+                  Generate Reset Token
+                </button>
+                <button type="button" onClick={() => setMode("login")} className="px-4 py-2.5 rounded border text-sm">
+                  Back to Login
+                </button>
+              </div>
+            </form>
+          )}
 
-        {mode === "reset" && (
-          <form onSubmit={handleReset} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Reset Token</label>
-              <input
-                required
-                value={resetToken}
-                onChange={(e) => setResetToken(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">New Password (min 6 chars)</label>
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm"
-              />
-            </div>
-            <div className="flex gap-2">
-              <button type="submit" className="px-5 py-2.5 rounded-xl bg-royal-600 text-white text-sm font-bold">
-                Reset Password
-              </button>
-              <button type="button" onClick={() => setMode("login")} className="px-4 py-2.5 rounded-xl border text-sm">
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
+          {mode === "reset" && (
+            <form onSubmit={handleReset} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Reset Token</label>
+                <input
+                  required
+                  value={resetToken}
+                  onChange={(e) => setResetToken(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-3.5 py-2.5 text-sm font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">New Password (min 6 chars)</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-3.5 py-2.5 text-sm"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button type="submit" className="px-5 py-2.5 rounded bg-[#0A2463] text-white text-sm font-bold">
+                  Reset Password
+                </button>
+                <button type="button" onClick={() => setMode("login")} className="px-4 py-2.5 rounded border text-sm">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );

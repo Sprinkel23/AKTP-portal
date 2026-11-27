@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import GEMINI_API_KEY
 from app.database import get_db
-from app.models import Announcement, Attendance, Examination, Fee, Mark, OtpCode, Parent, Payment, ResultApproval, SchoolClass, Student, Subject, Teacher, User
+from app.models import Announcement, Attendance, Examination, Fee, Mark, OtpCode, Parent, Payment, ResultApproval, SchoolClass, Student, Subject, Teacher, TeacherSalaryPayout, User
 from app.schemas import (
     AiAssistantRequest,
     ContactInquiryRequest,
@@ -19,7 +19,7 @@ from app.schemas import (
 from app.security import create_signed_payload, decode_signed_payload, get_optional_user, log_audit
 from app.services.helpers import compute_class_rank, compute_grade, get_or_create_settings
 from app.services.notifications import build_direct_links, send_notification
-from app.services.pdf_generator import generate_fee_receipt_pdf, generate_marks_card_pdf, number_to_words, result_division
+from app.services.pdf_generator import generate_fee_receipt_pdf, generate_marks_card_pdf, generate_salary_slip_pdf, number_to_words, result_division
 
 router = APIRouter(prefix="/api/public", tags=["Public"])
 
@@ -621,6 +621,48 @@ def download_public_fee_receipt_pdf(token: str = Query(...), db: Session = Depen
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="AK_FeeReceipt_{st.student_code}_{pay.id}.pdf"'},
+    )
+
+
+@router.get("/salary-slip/pdf")
+def download_public_salary_slip_pdf(token: str = Query(...), db: Session = Depends(get_db)):
+    data = decode_signed_payload(token)
+    sid = data.get("salid")
+    payout = db.query(TeacherSalaryPayout).filter(TeacherSalaryPayout.id == sid, TeacherSalaryPayout.status == "PAID").first()
+    if not payout or not payout.teacher:
+        raise HTTPException(status_code=404, detail="Verified salary slip not found.")
+    settings = get_or_create_settings(db)
+    t = payout.teacher
+    pdf_bytes = generate_salary_slip_pdf(
+        tuition_name=settings.tuition_name,
+        tagline=settings.tagline,
+        address=settings.address,
+        phone=settings.phone,
+        logo_path=settings.logo_path,
+        slip_number=payout.slip_number or f"AKS-{payout.id:04d}",
+        month_label=payout.month_label,
+        paid_date=payout.paid_at.strftime("%d %b %Y") if payout.paid_at else date.today().strftime("%d %b %Y"),
+        teacher_name=t.teacher_name,
+        teacher_code=t.teacher_code,
+        bank_account_holder=t.bank_account_holder or t.teacher_name,
+        bank_name=t.bank_name or "-",
+        bank_account_number=t.bank_account_number or "-",
+        bank_ifsc=t.bank_ifsc or "-",
+        upi_id=t.upi_id or "-",
+        base_salary=float(payout.base_salary),
+        bonus=float(payout.bonus),
+        deductions=float(payout.deductions),
+        net_amount=float(payout.net_amount),
+        payment_mode=payout.payment_mode,
+        transaction_reference=payout.transaction_reference or "PORTAL-PAYOUT",
+        remarks=payout.remarks or "",
+        director_name=settings.director_name,
+        director_designation=settings.director_designation,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="AK_SalarySlip_{t.teacher_code}_{payout.id}.pdf"'},
     )
 
 

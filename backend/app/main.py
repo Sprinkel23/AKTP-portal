@@ -27,6 +27,11 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE payments ADD COLUMN IF NOT EXISTS status VARCHAR(24) NOT NULL DEFAULT 'VERIFIED'",
             "ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by_user_id INTEGER",
             "ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP",
+            "ALTER TABLE teachers ADD COLUMN IF NOT EXISTS bank_account_holder VARCHAR(120)",
+            "ALTER TABLE teachers ADD COLUMN IF NOT EXISTS bank_name VARCHAR(120)",
+            "ALTER TABLE teachers ADD COLUMN IF NOT EXISTS bank_account_number VARCHAR(64)",
+            "ALTER TABLE teachers ADD COLUMN IF NOT EXISTS bank_ifsc VARCHAR(32)",
+            "ALTER TABLE teachers ADD COLUMN IF NOT EXISTS upi_id VARCHAR(120)",
         ):
             conn.execute(text(stmt))
     db = SessionLocal()

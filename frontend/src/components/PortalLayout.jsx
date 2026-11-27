@@ -39,39 +39,39 @@ export default function PortalLayout({ title, subtitle, navItems, activeTab, onS
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col lg:flex-row">
+    <div className="min-h-screen bg-[#eef2f6] flex flex-col lg:flex-row">
       {/* Mobile Header */}
-      <div className="lg:hidden bg-navy-900 text-white px-4 py-3 flex items-center justify-between sticky top-0 z-30 shadow">
+      <div className="lg:hidden bg-[#081B4B] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-30 border-b-2 border-[#C9A227]">
         <div className="flex items-center gap-2.5">
-          <img src="/ak-tuition-logo.png" alt="AK Tuition" className="w-9 h-9 object-contain" />
+          <img src="/ak-tuition-logo.png" alt="AK Tuition" className="w-8 h-8 object-contain" />
           <div>
-            <div className="font-bold text-sm leading-tight">AKTP PORTAL</div>
-            <div className="text-[11px] text-gold-400">{title}</div>
+            <div className="font-bold text-sm tracking-wide leading-tight">AK TUITION — AKTP PORTAL</div>
+            <div className="text-[11px] text-gold-400 uppercase tracking-wider">{title}</div>
           </div>
         </div>
-        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-lg hover:bg-white/10">
+        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded border border-white/20 hover:bg-white/10">
           {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
       </div>
 
-      {/* Sidebar */}
+      {/* Official Institutional Sidebar */}
       <aside
         className={`${
           sidebarOpen ? "block" : "hidden"
-        } lg:flex lg:flex-col lg:w-72 bg-navy-900 text-white shrink-0 lg:sticky lg:top-0 lg:h-screen z-20`}
+        } lg:flex lg:flex-col lg:w-64 bg-[#081B4B] text-white shrink-0 lg:sticky lg:top-0 lg:h-screen z-20 border-r border-slate-800`}
       >
-        <div className="p-5 border-b border-white/10 flex items-center gap-3">
+        <div className="px-4 py-4 border-b border-white/15 flex items-center gap-3 bg-[#061438]">
           <Link to="/" className="shrink-0">
-            <img src="/ak-tuition-logo.png" alt="AK Tuition Logo" className="w-12 h-12 object-contain" />
+            <img src="/ak-tuition-logo.png" alt="AK Tuition Logo" className="w-10 h-10 object-contain" />
           </Link>
           <div className="min-w-0">
-            <div className="font-display font-bold text-base tracking-wide truncate">AK TUITION</div>
-            <div className="text-xs text-gold-400 font-medium truncate">Learn • Practise • Achieve</div>
-            <div className="text-[11px] text-blue-200 mt-0.5 uppercase tracking-wider">{title}</div>
+            <div className="font-bold text-sm tracking-wider uppercase truncate">AK TUITION</div>
+            <div className="text-[10px] text-gold-400 font-semibold uppercase tracking-widest truncate">Institutional Portal</div>
+            <div className="text-[11px] text-slate-300 mt-0.5 truncate">{title}</div>
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+        <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;
@@ -82,18 +82,18 @@ export default function PortalLayout({ title, subtitle, navItems, activeTab, onS
                   onSelectTab(item.id);
                   setSidebarOpen(false);
                 }}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md text-xs font-semibold tracking-wide transition ${
                   active
-                    ? "bg-royal-600 text-white shadow-sm ring-1 ring-gold-400/50"
-                    : "text-blue-100 hover:bg-white/10 hover:text-white"
+                    ? "bg-[#102F7A] text-white border-l-4 border-[#D4AF37]"
+                    : "text-slate-200 hover:bg-white/10 hover:text-white border-l-4 border-transparent"
                 }`}
               >
-                <span className="flex items-center gap-3 truncate">
-                  {Icon && <Icon className={`w-4 h-4 shrink-0 ${active ? "text-gold-400" : "text-blue-300"}`} />}
+                <span className="flex items-center gap-2.5 truncate">
+                  {Icon && <Icon className={`w-4 h-4 shrink-0 ${active ? "text-gold-400" : "text-slate-400"}`} />}
                   <span className="truncate">{item.label}</span>
                 </span>
                 {item.badge > 0 && (
-                  <span className="ml-2 px-2 py-0.5 rounded-full text-[11px] font-bold bg-gold-500 text-navy-950">
+                  <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#D4AF37] text-[#061438]">
                     {item.badge}
                   </span>
                 )}
@@ -102,53 +102,64 @@ export default function PortalLayout({ title, subtitle, navItems, activeTab, onS
           })}
         </nav>
 
-        <div className="p-4 border-t border-white/10 space-y-2 bg-navy-950/50">
-          <div className="text-xs text-blue-200">
-            Signed in as <span className="font-semibold text-white block truncate">{user?.full_name}</span>
-            <span className="text-gold-400 uppercase text-[10px] tracking-wider">
+        <div className="p-3.5 border-t border-white/15 space-y-2 bg-[#061438]">
+          <div className="text-xs text-slate-300">
+            <span className="text-[10px] uppercase tracking-wider text-slate-400 block">Authorized Session</span>
+            <span className="font-semibold text-white block truncate">{user?.full_name}</span>
+            <span className="text-gold-400 uppercase text-[10px] tracking-wider font-mono">
               {user?.role} • {user?.student_code || user?.teacher_code || user?.username}
             </span>
           </div>
           <div className="flex gap-2 pt-1">
             <button
               onClick={() => setPwdOpen(true)}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium transition"
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded bg-white/10 hover:bg-white/20 text-[11px] font-semibold transition"
             >
               <KeyRound className="w-3.5 h-3.5" /> Password
             </button>
             <button
               onClick={handleLogout}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-600/90 hover:bg-red-600 text-xs font-semibold transition"
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded bg-red-700 hover:bg-red-800 text-[11px] font-semibold transition"
             >
-              <LogOut className="w-3.5 h-3.5" /> Logout
+              <LogOut className="w-3.5 h-3.5" /> Sign Out
             </button>
           </div>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 min-w-0">
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+      <main className="flex-1 min-w-0 flex flex-col">
+        <div className="bg-[#0A2463] text-white text-[11px] font-semibold px-6 py-1.5 border-b-2 border-[#C9A227] hidden lg:flex items-center justify-between">
+          <span className="tracking-wider uppercase">AK TUITION • ACADEMIC, EXAMINATION &amp; ADMINISTRATION PORTAL</span>
+          <span className="text-gold-400">Director: G. Akash, B.E.</span>
+        </div>
+        <header className="bg-white border-b border-slate-300 px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-navy-900">{title}</h1>
-            {subtitle && <p className="text-xs sm:text-sm text-slate-500">{subtitle}</p>}
+            <h1 className="text-lg sm:text-xl font-bold text-navy-900 tracking-tight">{title}</h1>
+            {subtitle && <p className="text-xs text-slate-500 font-medium">{subtitle}</p>}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Link
+              to="/results"
+              className="text-xs font-semibold text-navy-900 hover:bg-slate-100 px-3 py-1.5 rounded border border-slate-300"
+            >
+              Results Portal
+            </Link>
             <Link
               to="/website"
-              className="text-xs font-semibold text-royal-600 hover:text-navy-900 px-3 py-1.5 rounded-lg bg-blue-50"
+              className="text-xs font-semibold text-white bg-navy-900 hover:bg-royal-600 px-3 py-1.5 rounded"
             >
-              Public Website
+              Institution Home
             </Link>
           </div>
         </header>
-        <div className="p-4 sm:p-6 max-w-7xl mx-auto">{children}</div>
+        <div className="p-4 sm:p-6 max-w-7xl w-full mx-auto flex-1">{children}</div>
       </main>
 
       {/* Change Password Modal */}
       {pwdOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+          <div className="bg-white rounded-lg border border-slate-300 shadow-xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-navy-900">Change Account Password</h3>
               <button onClick={() => setPwdOpen(false)} className="text-slate-400 hover:text-slate-700">

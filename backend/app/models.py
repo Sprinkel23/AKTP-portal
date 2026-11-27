@@ -142,6 +142,11 @@ class Teacher(Base):
     address = Column(Text, nullable=True)
     joining_date = Column(Date, default=date.today, nullable=False)
     photo_path = Column(String(255), nullable=True)
+    bank_account_holder = Column(String(120), nullable=True)
+    bank_name = Column(String(120), nullable=True)
+    bank_account_number = Column(String(64), nullable=True)
+    bank_ifsc = Column(String(32), nullable=True)
+    upi_id = Column(String(120), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -515,6 +520,29 @@ class FeeReceipt(Base):
     pdf_path = Column(String(255), nullable=True)
 
     payment = relationship("Payment", back_populates="receipt")
+
+
+class TeacherSalaryPayout(Base):
+    __tablename__ = "teacher_salary_payouts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    teacher_id = Column(Integer, ForeignKey("teachers.id", ondelete="CASCADE"), nullable=False, index=True)
+    month_label = Column(String(48), nullable=False)
+    base_salary = Column(Numeric(10, 2), nullable=False, default=0)
+    bonus = Column(Numeric(10, 2), nullable=False, default=0)
+    deductions = Column(Numeric(10, 2), nullable=False, default=0)
+    net_amount = Column(Numeric(10, 2), nullable=False, default=0)
+    payment_mode = Column(String(32), nullable=False, default="BANK_TRANSFER")  # BANK_TRANSFER, UPI, NEFT, IMPS, CASH
+    transaction_reference = Column(String(100), nullable=True)
+    slip_number = Column(String(48), unique=True, nullable=True, index=True)
+    status = Column(String(24), default="PENDING", nullable=False, index=True)  # PENDING, PAID
+    remarks = Column(Text, nullable=True)
+    paid_at = Column(DateTime, nullable=True)
+    paid_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    teacher = relationship("Teacher")
+    paid_by = relationship("User", foreign_keys=[paid_by_user_id])
 
 
 class Notification(Base):

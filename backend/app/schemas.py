@@ -408,6 +408,7 @@ class GatewayTestRequest(BaseModel):
 
 class TeacherFeeCollectRequest(BaseModel):
     student_id: int
+    total_fees: Optional[float] = Field(None, ge=0)
     amount: float = Field(..., gt=0)
     payment_mode: str = "CASH"
     payment_date: Optional[date] = None
@@ -419,4 +420,31 @@ class TeacherFeeCollectRequest(BaseModel):
 class AdminFeeReviewRequest(BaseModel):
     action: str  # APPROVE or REJECT
     rejection_reason: Optional[str] = None
+    send_notifications: bool = True
+
+
+class TeacherBankDetailsUpdate(BaseModel):
+    bank_account_holder: str = Field(..., min_length=2)
+    bank_name: str = Field(..., min_length=2)
+    bank_account_number: str = Field(..., min_length=5)
+    bank_ifsc: str = Field(..., min_length=4)
+    upi_id: Optional[str] = None
+
+
+class TeacherSalaryRequestCreate(BaseModel):
+    month_label: str = Field(..., min_length=3)
+    requested_amount: float = Field(..., gt=0)
+    remarks: Optional[str] = None
+
+
+class AdminSalaryPayRequest(BaseModel):
+    teacher_id: int
+    payout_id: Optional[int] = None
+    month_label: str = Field(..., min_length=3)
+    base_salary: float = Field(..., ge=0)
+    bonus: float = Field(0, ge=0)
+    deductions: float = Field(0, ge=0)
+    payment_mode: str = "BANK_TRANSFER"
+    transaction_reference: Optional[str] = None
+    remarks: Optional[str] = None
     send_notifications: bool = True

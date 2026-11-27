@@ -645,6 +645,127 @@ def generate_fee_receipt_pdf(
     return buf.getvalue()
 
 
+def generate_salary_slip_pdf(
+    *,
+    tuition_name: str,
+    tagline: str,
+    address: str,
+    phone: str,
+    logo_path: Optional[str],
+    slip_number: str,
+    month_label: str,
+    paid_date: str,
+    teacher_name: str,
+    teacher_code: str,
+    bank_account_holder: str,
+    bank_name: str,
+    bank_account_number: str,
+    bank_ifsc: str,
+    upi_id: str,
+    base_salary: float,
+    bonus: float,
+    deductions: float,
+    net_amount: float,
+    payment_mode: str,
+    transaction_reference: str,
+    remarks: str,
+    director_name: str = "G. Akash, B.E.",
+    director_designation: str = "Director, AK Tuition",
+) -> bytes:
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    c.setStrokeColor(NAVY)
+    c.setLineWidth(2)
+    c.rect(18 * mm, height - 165 * mm, width - 36 * mm, 145 * mm)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(0.9)
+    c.rect(20 * mm, height - 163 * mm, width - 40 * mm, 141 * mm)
+
+    top_y = height - 32 * mm
+    resolved_logo = resolve_logo_path(logo_path)
+    if resolved_logo:
+        c.drawImage(str(resolved_logo), 24 * mm, top_y - 16 * mm, width=20 * mm, height=20 * mm, mask="auto", preserveAspectRatio=True)
+
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 17)
+    c.drawString(48 * mm, top_y - 5 * mm, tuition_name)
+    c.setFillColor(ROYAL)
+    c.setFont("Helvetica", 9)
+    c.drawString(48 * mm, top_y - 11 * mm, f"{tagline}  |  {phone}")
+    c.setFillColor(SLATE)
+    c.setFont("Helvetica", 8)
+    c.drawString(48 * mm, top_y - 16 * mm, address)
+
+    c.setFillColor(NAVY)
+    c.roundRect(width - 76 * mm, top_y - 16 * mm, 50 * mm, 12 * mm, 2, fill=1, stroke=0)
+    c.setFillColor(GOLD)
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawCentredString(width - 51 * mm, top_y - 11.5 * mm, "FACULTY SALARY SLIP")
+
+    c.setStrokeColor(GOLD)
+    c.line(24 * mm, top_y - 24 * mm, width - 24 * mm, top_y - 24 * mm)
+
+    y = top_y - 33 * mm
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(26 * mm, y, f"Slip No: {slip_number}   |   Month: {month_label}")
+    c.drawRightString(width - 26 * mm, y, f"Paid Date: {paid_date}")
+
+    y -= 9 * mm
+    c.setFillColor(LIGHT_BLUE)
+    c.roundRect(24 * mm, y - 26 * mm, width - 48 * mm, 28 * mm, 2, fill=1, stroke=0)
+    c.setFillColor(SLATE)
+    c.setFont("Helvetica-Bold", 8.8)
+    c.drawString(28 * mm, y - 7 * mm, f"Faculty Name: {teacher_name} ({teacher_code})")
+    c.drawString(28 * mm, y - 14 * mm, f"Bank / Holder: {bank_name or '-'} / {bank_account_holder or teacher_name}")
+    c.drawString(28 * mm, y - 21 * mm, f"Account / IFSC: {bank_account_number or '-'} ({bank_ifsc or '-'})")
+
+    c.drawString(120 * mm, y - 7 * mm, f"Payment Mode: {payment_mode}")
+    c.drawString(120 * mm, y - 14 * mm, f"UPI ID: {upi_id or '-'}")
+    c.drawString(120 * mm, y - 21 * mm, f"UTR / Ref: {(transaction_reference or 'PORTAL-VERIFIED')[:24]}")
+
+    y -= 42 * mm
+    summary_tbl = Table(
+        [
+            ["Base Salary", "Bonus / Allowance", "Deductions", "Net Salary Paid"],
+            [f"Rs. {base_salary:,.2f}", f"Rs. {bonus:,.2f}", f"Rs. {deductions:,.2f}", f"Rs. {net_amount:,.2f}"],
+        ],
+        colWidths=[40 * mm, 41 * mm, 39 * mm, 42 * mm],
+    )
+    summary_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("GRID", (0, 0), (-1, -1), 0.7, ROYAL),
+        ("BACKGROUND", (3, 1), (3, 1), GOLD_LIGHT),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    summary_tbl.wrapOn(c, width - 48 * mm, 30 * mm)
+    summary_tbl.drawOn(c, 24 * mm, y - 14 * mm)
+
+    if remarks:
+        c.setFillColor(SLATE)
+        c.setFont("Helvetica", 8)
+        c.drawString(26 * mm, y - 24 * mm, f"Remarks: {remarks[:95]}")
+
+    c.setFillColor(MUTED)
+    c.setFont("Helvetica", 8)
+    c.drawString(26 * mm, height - 157 * mm, "Digitally issued & verified salary slip from AKTP PORTAL.")
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawRightString(width - 26 * mm, height - 157 * mm, f"{director_name} — {director_designation}")
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
 def generate_question_paper_pdf(
     *,
     tuition_name: str,

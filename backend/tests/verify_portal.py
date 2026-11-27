@@ -542,6 +542,7 @@ def run_verification():
             headers=auth_header(teacher_auth["access_token"]),
             json={
                 "student_id": new_sid,
+                "total_fees": 8000,
                 "amount": 1500,
                 "payment_mode": "UPI",
                 "reference_number": f"TFEE-REF-{run_tag}",
@@ -570,6 +571,53 @@ def run_verification():
         pub_token = fee_rev.json()["receipt_pdf_url"].split("token=")[-1]
         pub_pdf_rec = client.get(f"/api/public/fee-receipt/pdf?token={pub_token}")
         assert pub_pdf_rec.status_code == 200 and pub_pdf_rec.content.startswith(b"%PDF")
+
+        # 12. Teacher Bank Details + Salary Request -> Admin Salary Payout -> Salary Slip PDF
+        bank_put = client.put(
+            "/api/teacher/bank-details",
+            headers=auth_header(teacher_auth["access_token"]),
+            json={
+                "bank_account_holder": "Rohan Kumar",
+                "bank_name": "State Bank of India",
+                "bank_account_number": "123456789012",
+                "bank_ifsc": "SBIN0001234",
+                "upi_id": "rohan@oksbi",
+            },
+        )
+        assert bank_put.status_code == 200
+        sal_req = client.post(
+            "/api/teacher/salary/request",
+            headers=auth_header(teacher_auth["access_token"]),
+            json={"month_label": "November 2026", "requested_amount": 25000, "remarks": "Monthly remuneration"},
+        )
+        assert sal_req.status_code == 200 and sal_req.json()["status"] == "PENDING"
+        sal_req_id = sal_req.json()["id"]
+
+        sal_admin_list = client.get("/api/admin/salaries", headers=auth_header(admin_auth["access_token"])).json()
+        assert any(t["upi_id"] == "rohan@oksbi" for t in sal_admin_list["teachers"])
+        sal_pay = client.post(
+            "/api/admin/salaries/pay",
+            headers=auth_header(admin_auth["access_token"]),
+            json={
+                "teacher_id": teacher_auth["user"]["teacher_id"],
+                "payout_id": sal_req_id,
+                "month_label": "November 2026",
+                "base_salary": 25000,
+                "bonus": 1000,
+                "deductions": 500,
+                "payment_mode": "BANK_TRANSFER",
+                "transaction_reference": f"UTR-{run_tag}",
+            },
+        )
+        assert sal_pay.status_code == 200 and sal_pay.json()["net_amount"] == 25500.0
+        assert sal_pay.json()["slip_number"].startswith("AKS-")
+        assert (sal_pay.json().get("upi_pay_url") or "").startswith("upi://pay?")
+
+        t_sal_pdf = client.get(f"/api/teacher/salary/{sal_req_id}/slip-pdf", headers=auth_header(teacher_auth["access_token"]))
+        assert t_sal_pdf.status_code == 200 and t_sal_pdf.content.startswith(b"%PDF")
+        sal_tok = sal_pay.json()["slip_pdf_url"].split("token=")[-1]
+        pub_sal_pdf = client.get(f"/api/public/salary-slip/pdf?token={sal_tok}")
+        assert pub_sal_pdf.status_code == 200 and pub_sal_pdf.content.startswith(b"%PDF")
 
         # Cleanup test student so seeded state stays tidy
         client.delete(f"/api/admin/students/{new_sid}?hard_delete=true", headers=auth_header(admin_auth["access_token"]))

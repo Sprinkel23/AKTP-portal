@@ -32,6 +32,7 @@ from app.models import (
     Subject,
     Teacher,
     TeacherAssignment,
+    TeacherSalaryPayout,
     User,
 )
 from app.schemas import (
@@ -40,8 +41,10 @@ from app.schemas import (
     MarksBulkEntry,
     QuestionPaperCreate,
     TeacherAllSubjectsMarksEntry,
+    TeacherBankDetailsUpdate,
     TeacherDirectMarksEntry,
     TeacherFeeCollectRequest,
+    TeacherSalaryRequestCreate,
     TeacherStudentCreate,
 )
 from app.security import create_signed_payload, hash_password, log_audit, require_roles
@@ -58,7 +61,7 @@ from app.services.notifications import (
     gateway_status_summary,
     send_notification,
 )
-from app.services.pdf_generator import generate_branded_table_pdf, generate_fee_receipt_pdf, generate_question_paper_pdf
+from app.services.pdf_generator import generate_branded_table_pdf, generate_fee_receipt_pdf, generate_question_paper_pdf, generate_salary_slip_pdf
 
 router = APIRouter(
     prefix="/api/teacher",
@@ -324,9 +327,9 @@ def teacher_add_student(
         db.add(Fee(
             student_id=student.id,
             academic_year_id=year.id,
-            total_fees=float(cls_obj.tuition_fee),
+            total_fees=0,
             paid_amount=0,
-            pending_amount=float(cls_obj.tuition_fee),
+            pending_amount=0,
         ))
 
     send_notification(
@@ -1337,9 +1340,9 @@ def list_teacher_fee_collections(
     student_rows = []
     for st in students:
         fee = db.query(Fee).filter(Fee.student_id == st.id).order_by(Fee.id.desc()).first()
-        tot_f = float(fee.total_fees) if fee else float(st.school_class.tuition_fee if st.school_class else 0)
+        tot_f = float(fee.total_fees) if fee else 0.0
         paid_f = float(fee.paid_amount) if fee else 0.0
-        pend_f = float(fee.pending_amount) if fee else tot_f
+        pend_f = float(fee.pending_amount) if fee else max(0.0, tot_f - paid_f)
         student_rows.append({
             "student_id": st.id,
             "student_code": st.student_code,
@@ -1424,16 +1427,19 @@ def teacher_collect_student_fee(
     fee = db.query(Fee).filter(Fee.student_id == st.id).order_by(Fee.id.desc()).first()
     if not fee:
         ay = db.query(AcademicYear).filter(AcademicYear.is_current == True).first() or db.query(AcademicYear).first()
-        base_fee = float(st.school_class.tuition_fee if st.school_class else 0)
+        init_total = float(payload.total_fees if payload.total_fees is not None else 0.0)
         fee = Fee(
             student_id=st.id,
             academic_year_id=ay.id,
-            total_fees=base_fee,
+            total_fees=init_total,
             paid_amount=0,
-            pending_amount=base_fee,
+            pending_amount=init_total,
         )
         db.add(fee)
         db.flush()
+    elif payload.total_fees is not None:
+        fee.total_fees = float(payload.total_fees)
+        fee.pending_amount = max(0.0, float(fee.total_fees) - float(fee.paid_amount))
 
     pay = Payment(
         fee_id=fee.id,
@@ -1504,6 +1510,164 @@ def teacher_download_fee_receipt_pdf(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="AK_FeeReceipt_{st.student_code}_{pay.id}.pdf"'},
+    )
+
+
+# ---------------- TEACHER BANK DETAILS & SALARY PAYOUTS ----------------
+
+@router.get("/salary")
+def get_teacher_salary_and_bank(
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    t = _get_teacher(current_user, db)
+    payouts = (
+        db.query(TeacherSalaryPayout)
+        .filter(TeacherSalaryPayout.teacher_id == t.id)
+        .order_by(TeacherSalaryPayout.created_at.desc(), TeacherSalaryPayout.id.desc())
+        .all()
+    )
+    out_payouts = []
+    for p in payouts:
+        tok = create_signed_payload({"salid": p.id}, expire_minutes=60 * 24 * 60) if p.status == "PAID" else None
+        out_payouts.append({
+            "id": p.id,
+            "month_label": p.month_label,
+            "base_salary": float(p.base_salary),
+            "bonus": float(p.bonus),
+            "deductions": float(p.deductions),
+            "net_amount": float(p.net_amount),
+            "payment_mode": p.payment_mode,
+            "transaction_reference": p.transaction_reference,
+            "slip_number": p.slip_number,
+            "status": p.status,
+            "remarks": p.remarks,
+            "paid_at": p.paid_at.isoformat() if p.paid_at else None,
+            "created_at": p.created_at.isoformat(),
+            "slip_pdf_url": f"https://aktp-backend-production.up.railway.app/api/public/salary-slip/pdf?token={tok}" if tok else None,
+        })
+
+    return {
+        "bank_details": {
+            "bank_account_holder": t.bank_account_holder or t.teacher_name,
+            "bank_name": t.bank_name or "",
+            "bank_account_number": t.bank_account_number or "",
+            "bank_ifsc": t.bank_ifsc or "",
+            "upi_id": t.upi_id or "",
+        },
+        "payouts": out_payouts,
+    }
+
+
+@router.put("/bank-details")
+def save_teacher_bank_details(
+    payload: TeacherBankDetailsUpdate,
+    request: Request,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    t = _get_teacher(current_user, db)
+    t.bank_account_holder = payload.bank_account_holder.strip()
+    t.bank_name = payload.bank_name.strip()
+    t.bank_account_number = payload.bank_account_number.strip()
+    t.bank_ifsc = payload.bank_ifsc.strip().upper()
+    t.upi_id = (payload.upi_id or "").strip() or None
+
+    dispatch_group_workflow_event(
+        db,
+        event_type="TEACHER_BANK_DETAILS",
+        title="Teacher Bank Details Sent to Admin",
+        message=f"{t.teacher_name} ({t.teacher_code}) updated Bank Details ({t.bank_name}, IFSC {t.bank_ifsc}) for salary payouts.",
+        entity_id=t.teacher_code,
+    )
+    log_audit(db, current_user.id, "UPDATE_TEACHER_BANK", "teacher", str(t.id), {"bank_name": t.bank_name}, request)
+    db.commit()
+    return {"message": "Bank details saved and sent to Administrator for salary payouts!"}
+
+
+@router.post("/salary/request")
+def request_teacher_salary_payout(
+    payload: TeacherSalaryRequestCreate,
+    request: Request,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    t = _get_teacher(current_user, db)
+    if not (t.bank_account_number or t.upi_id):
+        raise HTTPException(status_code=400, detail="Please save your Bank Account Details or UPI ID first.")
+
+    p = TeacherSalaryPayout(
+        teacher_id=t.id,
+        month_label=payload.month_label.strip(),
+        base_salary=payload.requested_amount,
+        bonus=0,
+        deductions=0,
+        net_amount=payload.requested_amount,
+        payment_mode="BANK_TRANSFER" if t.bank_account_number else "UPI",
+        status="PENDING",
+        remarks=payload.remarks,
+    )
+    db.add(p)
+    db.flush()
+    dispatch_group_workflow_event(
+        db,
+        event_type="SALARY_REQUESTED",
+        title="Teacher Salary Payout Request",
+        message=f"{t.teacher_name} ({t.teacher_code}) submitted salary request for {p.month_label}: Rs. {payload.requested_amount:,.2f}.",
+        entity_id=str(p.id),
+    )
+    log_audit(db, current_user.id, "REQUEST_SALARY_PAYOUT", "salary", str(p.id), {"month": p.month_label, "amount": payload.requested_amount}, request)
+    db.commit()
+    return {"id": p.id, "status": "PENDING", "message": f"Salary payout request for {p.month_label} sent to Admin!"}
+
+
+@router.get("/salary/{payout_id}/slip-pdf")
+def teacher_download_salary_slip_pdf(
+    payout_id: int,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    t = _get_teacher(current_user, db)
+    payout = (
+        db.query(TeacherSalaryPayout)
+        .filter(TeacherSalaryPayout.id == payout_id, TeacherSalaryPayout.teacher_id == t.id)
+        .first()
+    )
+    if not payout:
+        raise HTTPException(status_code=404, detail="Salary record not found.")
+    if payout.status != "PAID":
+        raise HTTPException(status_code=400, detail="Salary slip PDF is available once Admin completes the payout.")
+    settings = get_or_create_settings(db)
+    pdf_bytes = generate_salary_slip_pdf(
+        tuition_name=settings.tuition_name,
+        tagline=settings.tagline,
+        address=settings.address,
+        phone=settings.phone,
+        logo_path=settings.logo_path,
+        slip_number=payout.slip_number or f"AKS-{payout.id:04d}",
+        month_label=payout.month_label,
+        paid_date=payout.paid_at.strftime("%d %b %Y") if payout.paid_at else date.today().strftime("%d %b %Y"),
+        teacher_name=t.teacher_name,
+        teacher_code=t.teacher_code,
+        bank_account_holder=t.bank_account_holder or t.teacher_name,
+        bank_name=t.bank_name or "-",
+        bank_account_number=t.bank_account_number or "-",
+        bank_ifsc=t.bank_ifsc or "-",
+        upi_id=t.upi_id or "-",
+        base_salary=float(payout.base_salary),
+        bonus=float(payout.bonus),
+        deductions=float(payout.deductions),
+        net_amount=float(payout.net_amount),
+        payment_mode=payout.payment_mode,
+        transaction_reference=payout.transaction_reference or "PORTAL-PAYOUT",
+        remarks=payout.remarks or "",
+        director_name=settings.director_name,
+        director_designation=settings.director_designation,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="AK_SalarySlip_{t.teacher_code}_{payout.id}.pdf"'},
     )
 
 

@@ -14,6 +14,7 @@ import {
   X,
   IndianRupee,
   HelpCircle,
+  Landmark,
 } from "lucide-react";
 import PortalLayout from "../components/PortalLayout";
 import api, { downloadAuthorizedFile } from "../api/client";
@@ -47,10 +48,24 @@ export default function TeacherPortal() {
   const [feeData, setFeeData] = useState({ students: [], collections: [] });
   const [feeForm, setFeeForm] = useState({
     student_id: "",
+    total_fees: "",
     amount: "",
     payment_mode: "CASH",
     payment_date: new Date().toISOString().slice(0, 10),
     reference_number: "",
+    remarks: "",
+  });
+  const [salaryData, setSalaryData] = useState({ bank_details: {}, payouts: [] });
+  const [bankForm, setBankForm] = useState({
+    bank_account_holder: "",
+    bank_name: "",
+    bank_account_number: "",
+    bank_ifsc: "",
+    upi_id: "",
+  });
+  const [salReqForm, setSalReqForm] = useState({
+    month_label: new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+    requested_amount: "",
     remarks: "",
   });
   const [toast, setToast] = useState({ type: "", text: "" });
@@ -142,7 +157,7 @@ export default function TeacherPortal() {
 
   const loadAll = async () => {
     try {
-      const [dRes, clsRes, sRes, exRes, qpRes, attHistRes, atmpRes, feeRes] = await Promise.all([
+      const [dRes, clsRes, sRes, exRes, qpRes, attHistRes, atmpRes, feeRes, salRes] = await Promise.all([
         api.get("/api/teacher/dashboard"),
         api.get("/api/teacher/classes"),
         api.get("/api/teacher/students"),
@@ -151,9 +166,11 @@ export default function TeacherPortal() {
         api.get("/api/teacher/attendance/history"),
         api.get("/api/teacher/test-attempts"),
         api.get("/api/teacher/fees/collections").catch(() => ({ data: { students: [], collections: [] } })),
+        api.get("/api/teacher/salary").catch(() => ({ data: { bank_details: {}, payouts: [] } })),
       ]);
       setDash(dRes.data);
-      setAllClasses(clsRes.data.classes || []);
+      const loadedClasses = clsRes.data.classes || [];
+      setAllClasses(loadedClasses);
       setAllSubjects(clsRes.data.subjects || []);
       setStudents(sRes.data);
       setExams(exRes.data);
@@ -161,6 +178,19 @@ export default function TeacherPortal() {
       setAttHistory(attHistRes.data);
       setAttempts(atmpRes.data);
       setFeeData(feeRes.data || { students: [], collections: [] });
+      setSalaryData(salRes.data || { bank_details: {}, payouts: [] });
+      if (salRes.data?.bank_details) {
+        setBankForm((prev) => ({ ...prev, ...salRes.data.bank_details }));
+      }
+      if (!matrixCfg.class_id && loadedClasses.length > 0) {
+        const firstCid = String(loadedClasses[0].id);
+        setMatrixCfg((prev) => ({
+          ...prev,
+          class_id: firstCid,
+          exam_name: prev.exam_name || `Assessment ${new Date().toISOString().slice(0, 10)}`,
+        }));
+        loadAllSubjectsMatrix(firstCid, "");
+      }
     } catch (err) {
       notify(err.response?.data?.detail || "Error loading teacher portal.", "error");
     }
@@ -322,7 +352,8 @@ export default function TeacherPortal() {
     { id: "students", label: "All Students", icon: Users },
     { id: "attendance", label: "Daily Attendance", icon: ClipboardCheck },
     { id: "marks", label: "Marks Entry", icon: FileEdit },
-    { id: "fees", label: "Collect Fees", icon: IndianRupee },
+    { id: "fees", label: "Student Fees", icon: IndianRupee },
+    { id: "salary", label: "Salary & Bank", icon: Landmark },
     { id: "papers", label: "Question Papers", icon: FilePlus2 },
     { id: "evaluate", label: "Test Evaluation", icon: CheckCircle },
     { id: "guide", label: "How to Use", icon: HelpCircle },
@@ -345,7 +376,12 @@ export default function TeacherPortal() {
   };
 
   const openFeeForStudent = (st) => {
-    setFeeForm((prev) => ({ ...prev, student_id: String(st.id) }));
+    const fRec = (feeData.students || []).find((x) => String(x.student_id) === String(st.id));
+    setFeeForm((prev) => ({
+      ...prev,
+      student_id: String(st.id),
+      total_fees: fRec && fRec.total_fees > 0 ? String(fRec.total_fees) : "",
+    }));
     setTab("fees");
   };
 
@@ -832,7 +868,107 @@ export default function TeacherPortal() {
 
                 {matrixRows.length > 0 && matrixSubjects.some((s) => s.included) ? (
                   <div className="space-y-3">
-                    <div className="overflow-x-auto bg-white rounded-xl border">
+                    {focusedStudentId ? (() => {
+                      const targetRow = matrixRows.find((r) => String(r.student_id) === String(focusedStudentId));
+                      const rIdx = matrixRows.findIndex((r) => String(r.student_id) === String(focusedStudentId));
+                      if (!targetRow || rIdx < 0) return null;
+                      const activeCols = matrixSubjects.filter((s) => s.included);
+                      let sumObt = 0;
+                      let sumMax = 0;
+                      activeCols.forEach((col) => {
+                        const v = targetRow.scores?.[col.subject_id];
+                        if (v !== "" && v !== undefined && v !== null && !Number.isNaN(Number(v))) {
+                          sumObt += Number(v);
+                          sumMax += Number(col.max_marks) || 0;
+                        }
+                      });
+                      const totalPct = sumMax ? ((sumObt / sumMax) * 100).toFixed(1) : "0.0";
+                      return (
+                        <div className="space-y-3">
+                          <div className="bg-white border border-slate-300 rounded-lg overflow-hidden">
+                            <div className="bg-[#0A2463] text-white px-4 py-2.5 flex flex-wrap items-center justify-between text-xs font-bold">
+                              <span>
+                                SUBJECT-WISE MARKS ENTRY — {targetRow.student_code} • {targetRow.student_name}
+                              </span>
+                              <span className="text-gold-400">
+                                Total: {sumObt} / {sumMax} ({totalPct}%)
+                              </span>
+                            </div>
+                            <table className="w-full text-xs">
+                              <thead className="bg-slate-100 text-slate-700 uppercase border-b">
+                                <tr>
+                                  <th className="p-3 text-left">Subject</th>
+                                  <th className="p-3 text-center">Max Marks</th>
+                                  <th className="p-3 text-center">Marks Obtained</th>
+                                  <th className="p-3 text-center">% Score</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {activeCols.map((col) => {
+                                  const sIdx = matrixSubjects.findIndex((x) => x.subject_id === col.subject_id);
+                                  const rawVal = targetRow.scores?.[col.subject_id] ?? "";
+                                  const pctCell =
+                                    rawVal !== "" && Number(col.max_marks) > 0
+                                      ? `${((Number(rawVal) / Number(col.max_marks)) * 100).toFixed(1)}%`
+                                      : "-";
+                                  return (
+                                    <tr key={col.subject_id} className="hover:bg-slate-50">
+                                      <td className="p-3 font-bold text-navy-900">
+                                        {col.name} <span className="text-slate-400 font-mono">({col.code})</span>
+                                      </td>
+                                      <td className="p-3 text-center">
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          value={col.max_marks}
+                                          onChange={(e) => {
+                                            const next = [...matrixSubjects];
+                                            next[sIdx].max_marks = e.target.value;
+                                            setMatrixSubjects(next);
+                                          }}
+                                          className="w-24 rounded border border-slate-300 px-2 py-1 text-center font-semibold"
+                                        />
+                                      </td>
+                                      <td className="p-3 text-center">
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          max={Number(col.max_marks) || 100}
+                                          step="0.5"
+                                          placeholder="Enter marks"
+                                          value={rawVal}
+                                          onChange={(e) => {
+                                            const next = [...matrixRows];
+                                            next[rIdx].scores = {
+                                              ...(next[rIdx].scores || {}),
+                                              [col.subject_id]: e.target.value,
+                                            };
+                                            setMatrixRows(next);
+                                          }}
+                                          className="w-32 rounded border-2 border-[#0A2463]/40 focus:border-[#0A2463] px-2.5 py-1.5 text-center font-bold text-sm"
+                                        />
+                                      </td>
+                                      <td className="p-3 text-center font-bold text-royal-700">{pctCell}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          <input
+                            value={targetRow.remarks || ""}
+                            onChange={(e) => {
+                              const next = [...matrixRows];
+                              next[rIdx].remarks = e.target.value;
+                              setMatrixRows(next);
+                            }}
+                            placeholder="Optional overall teacher remarks for this student..."
+                            className="w-full rounded border border-slate-300 px-3 py-2 text-xs bg-white"
+                          />
+                        </div>
+                      );
+                    })() : (
+                    <div className="overflow-x-auto bg-white rounded-lg border border-slate-300">
                       <table className="w-full text-xs">
                         <thead className="bg-navy-900 text-white uppercase">
                           <tr>
@@ -864,11 +1000,7 @@ export default function TeacherPortal() {
                           </tr>
                         </thead>
                         <tbody className="divide-y">
-                          {(focusedStudentId
-                            ? matrixRows.filter((r) => String(r.student_id) === String(focusedStudentId))
-                            : matrixRows
-                          ).map((st) => {
-                            const rIdx = matrixRows.findIndex((x) => x.student_id === st.student_id);
+                          {matrixRows.map((st, rIdx) => {
                             const activeCols = matrixSubjects.filter((s) => s.included);
                             let rowObt = 0;
                             let rowMax = 0;
@@ -925,6 +1057,7 @@ export default function TeacherPortal() {
                         </tbody>
                       </table>
                     </div>
+                    )}
                     <div className="flex flex-wrap gap-3">
                       <button
                         type="button"
@@ -1727,12 +1860,14 @@ export default function TeacherPortal() {
                 const res = await api.post("/api/teacher/fees/collect", {
                   ...feeForm,
                   student_id: Number(feeForm.student_id),
+                  total_fees: feeForm.total_fees !== "" ? Number(feeForm.total_fees) : null,
                   amount: Number(feeForm.amount),
                   idempotency_key: `TFEE-${feeForm.student_id}-${Date.now()}`,
                 });
                 notify(res.data.message);
                 setFeeForm({
                   student_id: "",
+                  total_fees: "",
                   amount: "",
                   payment_mode: "CASH",
                   payment_date: new Date().toISOString().slice(0, 10),
@@ -1744,42 +1879,60 @@ export default function TeacherPortal() {
                 notify(err.response?.data?.detail || "Could not submit fee collection.", "error");
               }
             }}
-            className="bg-white rounded-2xl p-5 shadow-sm border space-y-4"
+            className="bg-white rounded-lg p-5 shadow-sm border border-slate-300 space-y-4"
           >
             <div>
-              <h3 className="font-bold text-navy-900 text-lg">Collect Student Fees (Send to Admin Verification)</h3>
+              <h3 className="font-bold text-navy-900 text-lg">Student Fee Entry &amp; Collection (Send to Admin Verification)</h3>
               <p className="text-xs text-slate-600">
-                Record collected tuition fees for any student. Once submitted, Admin verifies &amp; approves the collection, issues the <strong>Official PDF Receipt</strong>, and triggers SMS/WhatsApp receipt confirmation.
+                Enter the student&apos;s <strong>Total Fees</strong> and <strong>Paid Fees Collected</strong> directly. Admin verifies and issues the Official PDF Receipt + SMS link to the parent.
               </p>
             </div>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
               <select
                 required
                 value={feeForm.student_id}
-                onChange={(e) => setFeeForm({ ...feeForm, student_id: e.target.value })}
-                className="rounded-lg border px-3 py-2 bg-white font-semibold"
+                onChange={(e) => {
+                  const sid = e.target.value;
+                  const fRec = (feeData.students || []).find((x) => String(x.student_id) === String(sid));
+                  setFeeForm({
+                    ...feeForm,
+                    student_id: sid,
+                    total_fees: fRec && fRec.total_fees > 0 ? String(fRec.total_fees) : "",
+                  });
+                }}
+                className="rounded border border-slate-300 px-3 py-2 bg-white font-semibold"
               >
                 <option value="">Select Student *</option>
                 {(feeData.students || []).map((st) => (
                   <option key={st.student_id} value={st.student_id}>
-                    {st.student_code} - {st.student_name} ({st.class_name}) [Pending: Rs. {st.pending_amount}]
+                    {st.student_code} - {st.student_name} ({st.class_name}) [Total: Rs.{st.total_fees} | Paid: Rs.{st.paid_amount}]
                   </option>
                 ))}
               </select>
               <input
                 type="number"
                 required
+                min={0}
+                step="0.01"
+                placeholder="Total Fees for Student (Rs.) *"
+                value={feeForm.total_fees}
+                onChange={(e) => setFeeForm({ ...feeForm, total_fees: e.target.value })}
+                className="rounded border border-slate-300 px-3 py-2 font-semibold"
+              />
+              <input
+                type="number"
+                required
                 min={1}
                 step="0.01"
-                placeholder="Amount Collected (Rs.) *"
+                placeholder="Paid Fees Collected Now (Rs.) *"
                 value={feeForm.amount}
                 onChange={(e) => setFeeForm({ ...feeForm, amount: e.target.value })}
-                className="rounded-lg border px-3 py-2"
+                className="rounded border border-slate-300 px-3 py-2 font-semibold"
               />
               <select
                 value={feeForm.payment_mode}
                 onChange={(e) => setFeeForm({ ...feeForm, payment_mode: e.target.value })}
-                className="rounded-lg border px-3 py-2 bg-white"
+                className="rounded border border-slate-300 px-3 py-2 bg-white"
               >
                 <option value="CASH">Cash</option>
                 <option value="UPI">UPI</option>
@@ -1790,23 +1943,23 @@ export default function TeacherPortal() {
                 type="date"
                 value={feeForm.payment_date}
                 onChange={(e) => setFeeForm({ ...feeForm, payment_date: e.target.value })}
-                className="rounded-lg border px-3 py-2"
+                className="rounded border border-slate-300 px-3 py-2"
               />
               <input
-                placeholder="Transaction / Receipt Ref (Optional)"
+                placeholder="Transaction / Ref No. (Optional)"
                 value={feeForm.reference_number}
                 onChange={(e) => setFeeForm({ ...feeForm, reference_number: e.target.value })}
-                className="rounded-lg border px-3 py-2"
+                className="rounded border border-slate-300 px-3 py-2"
               />
               <input
                 placeholder="Remarks (Optional)"
                 value={feeForm.remarks}
                 onChange={(e) => setFeeForm({ ...feeForm, remarks: e.target.value })}
-                className="rounded-lg border px-3 py-2"
+                className="sm:col-span-2 lg:col-span-3 rounded border border-slate-300 px-3 py-2"
               />
             </div>
-            <button type="submit" className="px-6 py-2.5 rounded-xl bg-navy-900 hover:bg-royal-600 text-white text-sm font-bold">
-              Submit Fee Collection to Admin for Verification
+            <button type="submit" className="px-6 py-2.5 rounded bg-navy-900 hover:bg-royal-600 text-white text-sm font-bold">
+              Submit Fee Entry to Admin for Verification
             </button>
           </form>
 
@@ -1863,6 +2016,169 @@ export default function TeacherPortal() {
                         </>
                       ) : (
                         <span className="text-slate-400">Waiting Admin Verification</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TEACHER BANK DETAILS & SALARY PAYOUTS */}
+      {tab === "salary" && (
+        <div className="space-y-6">
+          <div className="grid lg:grid-cols-2 gap-6">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  const res = await api.put("/api/teacher/bank-details", bankForm);
+                  notify(res.data.message);
+                  loadAll();
+                } catch (err) {
+                  notify(err.response?.data?.detail || "Could not save bank details.", "error");
+                }
+              }}
+              className="bg-white rounded-lg p-5 shadow-sm border border-slate-300 space-y-3"
+            >
+              <h3 className="font-bold text-navy-900 text-base">Bank Account &amp; UPI Details (Send to Admin)</h3>
+              <p className="text-xs text-slate-600">
+                Enter your bank details below so Administrator can verify and disburse salary payouts through the portal.
+              </p>
+              <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                <input
+                  required
+                  placeholder="Account Holder Name *"
+                  value={bankForm.bank_account_holder || ""}
+                  onChange={(e) => setBankForm({ ...bankForm, bank_account_holder: e.target.value })}
+                  className="rounded border border-slate-300 px-3 py-2"
+                />
+                <input
+                  required
+                  placeholder="Bank Name *"
+                  value={bankForm.bank_name || ""}
+                  onChange={(e) => setBankForm({ ...bankForm, bank_name: e.target.value })}
+                  className="rounded border border-slate-300 px-3 py-2"
+                />
+                <input
+                  required
+                  placeholder="Account Number *"
+                  value={bankForm.bank_account_number || ""}
+                  onChange={(e) => setBankForm({ ...bankForm, bank_account_number: e.target.value })}
+                  className="rounded border border-slate-300 px-3 py-2 font-mono"
+                />
+                <input
+                  required
+                  placeholder="IFSC Code *"
+                  value={bankForm.bank_ifsc || ""}
+                  onChange={(e) => setBankForm({ ...bankForm, bank_ifsc: e.target.value.toUpperCase() })}
+                  className="rounded border border-slate-300 px-3 py-2 font-mono uppercase"
+                />
+                <input
+                  placeholder="UPI ID (Optional, e.g. name@okaxis)"
+                  value={bankForm.upi_id || ""}
+                  onChange={(e) => setBankForm({ ...bankForm, upi_id: e.target.value })}
+                  className="sm:col-span-2 rounded border border-slate-300 px-3 py-2"
+                />
+              </div>
+              <button type="submit" className="px-5 py-2 rounded bg-navy-900 hover:bg-royal-600 text-white text-xs font-bold">
+                Save &amp; Send Bank Details to Admin
+              </button>
+            </form>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  const res = await api.post("/api/teacher/salary/request", {
+                    ...salReqForm,
+                    requested_amount: Number(salReqForm.requested_amount),
+                  });
+                  notify(res.data.message);
+                  setSalReqForm({ ...salReqForm, requested_amount: "", remarks: "" });
+                  loadAll();
+                } catch (err) {
+                  notify(err.response?.data?.detail || "Salary request failed.", "error");
+                }
+              }}
+              className="bg-white rounded-lg p-5 shadow-sm border border-slate-300 space-y-3"
+            >
+              <h3 className="font-bold text-navy-900 text-base">Request Salary Payout</h3>
+              <p className="text-xs text-slate-600">
+                Submit monthly salary payout details to Admin after saving your Bank / UPI details.
+              </p>
+              <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                <input
+                  required
+                  placeholder="Month (e.g. November 2026)"
+                  value={salReqForm.month_label}
+                  onChange={(e) => setSalReqForm({ ...salReqForm, month_label: e.target.value })}
+                  className="rounded border border-slate-300 px-3 py-2"
+                />
+                <input
+                  type="number"
+                  required
+                  min={1}
+                  placeholder="Salary Amount (Rs.) *"
+                  value={salReqForm.requested_amount}
+                  onChange={(e) => setSalReqForm({ ...salReqForm, requested_amount: e.target.value })}
+                  className="rounded border border-slate-300 px-3 py-2"
+                />
+                <input
+                  placeholder="Remarks (Optional)"
+                  value={salReqForm.remarks}
+                  onChange={(e) => setSalReqForm({ ...salReqForm, remarks: e.target.value })}
+                  className="sm:col-span-2 rounded border border-slate-300 px-3 py-2"
+                />
+              </div>
+              <button type="submit" className="px-5 py-2 rounded bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold">
+                Send Salary Payout Request to Admin
+              </button>
+            </form>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-sm border border-slate-300 overflow-x-auto">
+            <div className="p-4 border-b font-bold text-navy-900 text-sm">Salary Payout History &amp; Official Salary Slips</div>
+            <table className="w-full text-xs">
+              <thead className="bg-navy-900 text-white uppercase">
+                <tr>
+                  <th className="p-3 text-left">Month</th>
+                  <th className="p-3 text-left">Slip No</th>
+                  <th className="p-3 text-center">Base</th>
+                  <th className="p-3 text-center">Bonus / Ded</th>
+                  <th className="p-3 text-center">Net Paid</th>
+                  <th className="p-3 text-center">Mode / UTR</th>
+                  <th className="p-3 text-center">Status</th>
+                  <th className="p-3 text-right">Salary Slip PDF</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {(salaryData.payouts || []).map((p) => (
+                  <tr key={p.id}>
+                    <td className="p-3 font-semibold">{p.month_label}</td>
+                    <td className="p-3 font-mono font-bold text-royal-700">{p.slip_number || "-"}</td>
+                    <td className="p-3 text-center">Rs. {p.base_salary.toLocaleString()}</td>
+                    <td className="p-3 text-center">+Rs.{p.bonus} / -Rs.{p.deductions}</td>
+                    <td className="p-3 text-center font-bold text-navy-900">Rs. {p.net_amount.toLocaleString()}</td>
+                    <td className="p-3 text-center">{p.payment_mode} {p.transaction_reference ? `(${p.transaction_reference})` : ""}</td>
+                    <td className="p-3 text-center">
+                      <span className={`px-2 py-0.5 rounded font-bold ${p.status === "PAID" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                        {p.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right">
+                      {p.status === "PAID" ? (
+                        <button
+                          type="button"
+                          onClick={() => downloadAuthorizedFile(`/api/teacher/salary/${p.id}/slip-pdf`, `AK_SalarySlip_${p.id}.pdf`)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-navy-900 text-white font-bold"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Slip PDF
+                        </button>
+                      ) : (
+                        <span className="text-slate-400">Pending Admin Payout</span>
                       )}
                     </td>
                   </tr>

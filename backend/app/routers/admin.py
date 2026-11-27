@@ -37,10 +37,12 @@ from app.models import (
     Teacher,
     TeacherAssignment,
     TeacherAttendance,
+    TeacherSalaryPayout,
     User,
 )
 from app.schemas import (
     AdminFeeReviewRequest,
+    AdminSalaryPayRequest,
     AnnouncementCreate,
     ClassCreate,
     ClassSubjectAssign,
@@ -81,6 +83,7 @@ from app.services.pdf_generator import (
     generate_branded_table_pdf,
     generate_fee_receipt_pdf,
     generate_marks_card_pdf,
+    generate_salary_slip_pdf,
 )
 
 router = APIRouter(
@@ -376,7 +379,7 @@ def create_student(payload: StudentCreate, request: Request, current_user: User 
         status="ACTIVE",
     ))
 
-    total_fee = float(payload.total_fees if payload.total_fees is not None else cls_obj.tuition_fee)
+    total_fee = float(payload.total_fees if payload.total_fees is not None else 0.0)
     db.add(Fee(
         student_id=student.id,
         academic_year_id=year.id,
@@ -1226,6 +1229,248 @@ def download_fee_receipt_pdf(payment_id: int, db: Session = Depends(get_db)):
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="AK_Receipt_{st.student_code}_{pay.id}.pdf"'},
+    )
+
+
+# ---------------- TEACHER SALARY PAYOUTS ----------------
+
+@router.get("/salaries")
+def list_admin_teacher_salaries(db: Session = Depends(get_db)):
+    teachers = db.query(Teacher).filter(Teacher.is_active == True).order_by(Teacher.teacher_code.asc()).all()
+    payouts = (
+        db.query(TeacherSalaryPayout)
+        .order_by(TeacherSalaryPayout.created_at.desc(), TeacherSalaryPayout.id.desc())
+        .limit(120)
+        .all()
+    )
+    out_teachers = []
+    for t in teachers:
+        pending_req = (
+            db.query(TeacherSalaryPayout)
+            .filter(TeacherSalaryPayout.teacher_id == t.id, TeacherSalaryPayout.status == "PENDING")
+            .order_by(TeacherSalaryPayout.id.desc())
+            .first()
+        )
+        out_teachers.append({
+            "teacher_id": t.id,
+            "teacher_code": t.teacher_code,
+            "teacher_name": t.teacher_name,
+            "phone": t.phone,
+            "specialization": t.specialization,
+            "bank_account_holder": t.bank_account_holder or "",
+            "bank_name": t.bank_name or "",
+            "bank_account_number": t.bank_account_number or "",
+            "bank_ifsc": t.bank_ifsc or "",
+            "upi_id": t.upi_id or "",
+            "has_bank_details": bool(t.bank_account_number or t.upi_id),
+            "pending_request_id": pending_req.id if pending_req else None,
+            "pending_month": pending_req.month_label if pending_req else None,
+            "pending_amount": float(pending_req.net_amount) if pending_req else None,
+        })
+
+    out_payouts = []
+    for p in payouts:
+        t = p.teacher
+        tok = create_signed_payload({"salid": p.id}, expire_minutes=60 * 24 * 60) if p.status == "PAID" else None
+        slip_url = f"https://aktp-backend-production.up.railway.app/api/public/salary-slip/pdf?token={tok}" if tok else None
+        msg = (
+            f"AK TUITION - SALARY CREDITED\n"
+            f"Slip: {p.slip_number or f'AKS-{p.id:04d}'}\n"
+            f"Faculty: {t.teacher_name if t else ''} ({t.teacher_code if t else ''})\n"
+            f"Month: {p.month_label}\n"
+            f"Net Salary Paid: Rs. {float(p.net_amount):,.2f} ({p.payment_mode})\n"
+            f"Ref: {p.transaction_reference or 'PORTAL-PAYOUT'}\n"
+            f"Salary Slip PDF: {slip_url}"
+            if slip_url and t
+            else ""
+        )
+        links = build_direct_links(t.phone, msg) if slip_url and t else {"whatsapp_url": None, "sms_url": None}
+        out_payouts.append({
+            "id": p.id,
+            "teacher_id": p.teacher_id,
+            "teacher_code": t.teacher_code if t else "",
+            "teacher_name": t.teacher_name if t else "",
+            "phone": t.phone if t else "",
+            "bank_name": t.bank_name if t else "",
+            "bank_account_number": t.bank_account_number if t else "",
+            "bank_ifsc": t.bank_ifsc if t else "",
+            "upi_id": t.upi_id if t else "",
+            "month_label": p.month_label,
+            "base_salary": float(p.base_salary),
+            "bonus": float(p.bonus),
+            "deductions": float(p.deductions),
+            "net_amount": float(p.net_amount),
+            "payment_mode": p.payment_mode,
+            "transaction_reference": p.transaction_reference,
+            "slip_number": p.slip_number,
+            "status": p.status,
+            "remarks": p.remarks,
+            "paid_at": p.paid_at.isoformat() if p.paid_at else None,
+            "slip_pdf_url": slip_url,
+            "whatsapp_url": links["whatsapp_url"],
+            "sms_url": links["sms_url"],
+        })
+
+    return {"teachers": out_teachers, "payouts": out_payouts}
+
+
+@router.post("/salaries/pay")
+def admin_send_teacher_salary(
+    payload: AdminSalaryPayRequest,
+    request: Request,
+    current_user: User = Depends(require_roles(["admin"])),
+    db: Session = Depends(get_db),
+):
+    t = db.query(Teacher).filter(Teacher.id == payload.teacher_id, Teacher.is_active == True).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Teacher not found.")
+
+    valid_modes = {"BANK_TRANSFER", "UPI", "NEFT", "IMPS", "CASH"}
+    mode = payload.payment_mode.strip().upper().replace(" ", "_")
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"Payment mode must be one of: {', '.join(sorted(valid_modes))}.")
+
+    net_amt = max(0.0, float(payload.base_salary) + float(payload.bonus) - float(payload.deductions))
+    if net_amt <= 0:
+        raise HTTPException(status_code=400, detail="Net salary payout amount must be greater than 0.")
+
+    payout = None
+    if payload.payout_id:
+        payout = db.query(TeacherSalaryPayout).filter(
+            TeacherSalaryPayout.id == payload.payout_id,
+            TeacherSalaryPayout.teacher_id == t.id,
+        ).first()
+        if not payout:
+            raise HTTPException(status_code=404, detail="Salary request not found.")
+    if not payout:
+        payout = TeacherSalaryPayout(teacher_id=t.id, month_label=payload.month_label.strip())
+        db.add(payout)
+
+    payout.month_label = payload.month_label.strip()
+    payout.base_salary = payload.base_salary
+    payout.bonus = payload.bonus
+    payout.deductions = payload.deductions
+    payout.net_amount = net_amt
+    payout.payment_mode = mode
+    payout.transaction_reference = (payload.transaction_reference or "").strip() or f"AKSAL-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    payout.status = "PAID"
+    payout.remarks = payload.remarks
+    payout.paid_at = datetime.utcnow()
+    payout.paid_by_user_id = current_user.id
+    db.flush()
+
+    slip_no = f"AKS-{datetime.now().year}-{payout.id:04d}"
+    payout.slip_number = slip_no
+    db.flush()
+
+    settings = get_or_create_settings(db)
+    tok = create_signed_payload({"salid": payout.id}, expire_minutes=60 * 24 * 60)
+    slip_url = f"https://aktp-backend-production.up.railway.app/api/public/salary-slip/pdf?token={tok}"
+    msg = (
+        f"AK TUITION - SALARY CREDITED\n"
+        f"Slip: {slip_no} | Month: {payout.month_label}\n"
+        f"Teacher: {t.teacher_name} ({t.teacher_code})\n"
+        f"Net Salary Paid: Rs. {net_amt:,.2f} ({mode})\n"
+        f"Ref: {payout.transaction_reference}\n"
+        f"Download Signed Salary Slip PDF: {slip_url}\n"
+        f"- Verified by {settings.director_name}"
+    )
+
+    dispatches = []
+    if payload.send_notifications and t.phone:
+        n_wa = send_notification(
+            db,
+            recipient_phone=t.phone,
+            channel="WHATSAPP",
+            notification_type="SALARY_PAYOUT",
+            message=msg,
+            dedup_key=f"SAL_WA_{payout.id}",
+            recipient_user_id=t.user_id,
+        )
+        if gateway_status_summary(settings)["sms_live"]:
+            send_notification(
+                db,
+                recipient_phone=t.phone,
+                channel="SMS",
+                notification_type="SALARY_PAYOUT",
+                message=msg,
+                dedup_key=f"SAL_SMS_{payout.id}",
+                recipient_user_id=t.user_id,
+            )
+        links = build_direct_links(t.phone, msg)
+        dispatches.append({
+            "phone": t.phone,
+            "status": n_wa.status,
+            "provider": n_wa.provider,
+            "whatsapp_url": links["whatsapp_url"],
+            "sms_url": links["sms_url"],
+        })
+
+    dispatch_group_workflow_event(
+        db,
+        event_type="SALARY_PAID",
+        title=f"Faculty Salary Disbursed ({slip_no})",
+        message=f"Admin paid Rs. {net_amt:,.2f} ({mode}) to {t.teacher_name} ({t.teacher_code}) for {payout.month_label}.",
+        entity_id=str(payout.id),
+    )
+    log_audit(db, current_user.id, "PAY_TEACHER_SALARY", "salary", str(payout.id), {"teacher": t.teacher_code, "net_amount": net_amt}, request)
+    db.commit()
+
+    from urllib.parse import quote as _q
+    upi_deep_link = (
+        f"upi://pay?pa={_q(t.upi_id)}&pn={_q(t.bank_account_holder or t.teacher_name)}&am={net_amt:.2f}&tn={_q(f'AK Tuition Salary {payout.month_label}')}&cu=INR"
+        if t.upi_id
+        else None
+    )
+    return {
+        "id": payout.id,
+        "slip_number": slip_no,
+        "net_amount": net_amt,
+        "status": "PAID",
+        "slip_pdf_url": slip_url,
+        "upi_pay_url": upi_deep_link,
+        "dispatches": dispatches,
+        "message": f"Salary payout Rs. {net_amt:,.2f} recorded for {t.teacher_name} (Slip {slip_no})!",
+    }
+
+
+@router.get("/salaries/{payout_id}/slip-pdf")
+def admin_download_salary_slip_pdf(payout_id: int, db: Session = Depends(get_db)):
+    payout = db.query(TeacherSalaryPayout).filter(TeacherSalaryPayout.id == payout_id).first()
+    if not payout or not payout.teacher:
+        raise HTTPException(status_code=404, detail="Salary slip record not found.")
+    t = payout.teacher
+    settings = get_or_create_settings(db)
+    pdf_bytes = generate_salary_slip_pdf(
+        tuition_name=settings.tuition_name,
+        tagline=settings.tagline,
+        address=settings.address,
+        phone=settings.phone,
+        logo_path=settings.logo_path,
+        slip_number=payout.slip_number or f"AKS-{payout.id:04d}",
+        month_label=payout.month_label,
+        paid_date=payout.paid_at.strftime("%d %b %Y") if payout.paid_at else date.today().strftime("%d %b %Y"),
+        teacher_name=t.teacher_name,
+        teacher_code=t.teacher_code,
+        bank_account_holder=t.bank_account_holder or t.teacher_name,
+        bank_name=t.bank_name or "-",
+        bank_account_number=t.bank_account_number or "-",
+        bank_ifsc=t.bank_ifsc or "-",
+        upi_id=t.upi_id or "-",
+        base_salary=float(payout.base_salary),
+        bonus=float(payout.bonus),
+        deductions=float(payout.deductions),
+        net_amount=float(payout.net_amount),
+        payment_mode=payout.payment_mode,
+        transaction_reference=payout.transaction_reference or "PORTAL-PAYOUT",
+        remarks=payout.remarks or "",
+        director_name=settings.director_name,
+        director_designation=settings.director_designation,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="AK_SalarySlip_{t.teacher_code}_{payout.id}.pdf"'},
     )
 
 
