@@ -404,3 +404,19 @@ class TeacherAllSubjectsMarksEntry(BaseModel):
 class GatewayTestRequest(BaseModel):
     test_phone: Optional[str] = None
     test_message: Optional[str] = None
+
+
+class TeacherFeeCollectRequest(BaseModel):
+    student_id: int
+    amount: float = Field(..., gt=0)
+    payment_mode: str = "CASH"
+    payment_date: Optional[date] = None
+    reference_number: Optional[str] = None
+    remarks: Optional[str] = None
+    idempotency_key: Optional[str] = None
+
+
+class AdminFeeReviewRequest(BaseModel):
+    action: str  # APPROVE or REJECT
+    rejection_reason: Optional[str] = None
+    send_notifications: bool = True

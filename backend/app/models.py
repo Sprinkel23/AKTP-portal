@@ -494,6 +494,9 @@ class Payment(Base):
     reference_number = Column(String(100), unique=True, nullable=True)
     idempotency_key = Column(String(120), unique=True, nullable=True)
     remarks = Column(String(255), nullable=True)
+    status = Column(String(24), default="VERIFIED", nullable=False, index=True)  # PENDING, VERIFIED, REJECTED
+    verified_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    verified_at = Column(DateTime, nullable=True)
     recorded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

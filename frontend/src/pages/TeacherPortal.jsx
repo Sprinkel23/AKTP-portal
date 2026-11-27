@@ -12,6 +12,8 @@ import {
   KeyRound,
   Copy,
   X,
+  IndianRupee,
+  HelpCircle,
 } from "lucide-react";
 import PortalLayout from "../components/PortalLayout";
 import api, { downloadAuthorizedFile } from "../api/client";
@@ -40,6 +42,17 @@ export default function TeacherPortal() {
   const [allSubjects, setAllSubjects] = useState([]);
   const [absentAlerts, setAbsentAlerts] = useState([]);
   const [studentClassFilter, setStudentClassFilter] = useState("");
+  const [focusedStudentId, setFocusedStudentId] = useState("");
+  const [matrixSubjectFilter, setMatrixSubjectFilter] = useState("");
+  const [feeData, setFeeData] = useState({ students: [], collections: [] });
+  const [feeForm, setFeeForm] = useState({
+    student_id: "",
+    amount: "",
+    payment_mode: "CASH",
+    payment_date: new Date().toISOString().slice(0, 10),
+    reference_number: "",
+    remarks: "",
+  });
   const [toast, setToast] = useState({ type: "", text: "" });
 
   // Attendance state
@@ -129,7 +142,7 @@ export default function TeacherPortal() {
 
   const loadAll = async () => {
     try {
-      const [dRes, clsRes, sRes, exRes, qpRes, attHistRes, atmpRes] = await Promise.all([
+      const [dRes, clsRes, sRes, exRes, qpRes, attHistRes, atmpRes, feeRes] = await Promise.all([
         api.get("/api/teacher/dashboard"),
         api.get("/api/teacher/classes"),
         api.get("/api/teacher/students"),
@@ -137,6 +150,7 @@ export default function TeacherPortal() {
         api.get("/api/teacher/question-papers"),
         api.get("/api/teacher/attendance/history"),
         api.get("/api/teacher/test-attempts"),
+        api.get("/api/teacher/fees/collections").catch(() => ({ data: { students: [], collections: [] } })),
       ]);
       setDash(dRes.data);
       setAllClasses(clsRes.data.classes || []);
@@ -146,6 +160,7 @@ export default function TeacherPortal() {
       setPapers(qpRes.data);
       setAttHistory(attHistRes.data);
       setAttempts(atmpRes.data);
+      setFeeData(feeRes.data || { students: [], collections: [] });
     } catch (err) {
       notify(err.response?.data?.detail || "Error loading teacher portal.", "error");
     }
@@ -307,9 +322,32 @@ export default function TeacherPortal() {
     { id: "students", label: "All Students", icon: Users },
     { id: "attendance", label: "Daily Attendance", icon: ClipboardCheck },
     { id: "marks", label: "Marks Entry", icon: FileEdit },
+    { id: "fees", label: "Collect Fees", icon: IndianRupee },
     { id: "papers", label: "Question Papers", icon: FilePlus2 },
     { id: "evaluate", label: "Test Evaluation", icon: CheckCircle },
+    { id: "guide", label: "How to Use", icon: HelpCircle },
   ];
+
+  const openMarksForStudent = async (st) => {
+    const cid = String(st.class_id || "");
+    const todayLabel = `Assessment ${new Date().toISOString().slice(0, 10)}`;
+    setMarksMode("matrix");
+    setFocusedStudentId(String(st.id));
+    setMatrixSubjectFilter("");
+    setMatrixCfg((prev) => ({
+      ...prev,
+      class_id: cid,
+      examination_id: "",
+      exam_name: prev.exam_name.trim() ? prev.exam_name : todayLabel,
+    }));
+    await loadAllSubjectsMatrix(cid, "");
+    setTab("marks");
+  };
+
+  const openFeeForStudent = (st) => {
+    setFeeForm((prev) => ({ ...prev, student_id: String(st.id) }));
+    setTab("fees");
+  };
 
   const sumQuestionMarks = qpForm.questions.reduce((acc, q) => acc + Number(q.marks || 0), 0);
 
@@ -429,23 +467,49 @@ export default function TeacherPortal() {
               <thead className="bg-navy-900 text-white text-xs uppercase">
                 <tr>
                   <th className="p-3 text-left">Student ID</th>
-                  <th className="p-3 text-left">Name</th>
+                  <th className="p-3 text-left">Name (Click to Enter Marks)</th>
                   <th className="p-3 text-left">Class</th>
                   <th className="p-3 text-center">Attendance %</th>
                   <th className="p-3 text-left">Recent Marks</th>
+                  <th className="p-3 text-right">Quick Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {(studentClassFilter ? students.filter((s) => String(s.class_id) === String(studentClassFilter)) : students).map((s) => (
-                  <tr key={s.id}>
+                  <tr key={s.id} className="hover:bg-blue-50/40 transition">
                     <td className="p-3 font-mono font-bold text-royal-700">{s.student_code}</td>
-                    <td className="p-3 font-semibold">{s.student_name}</td>
+                    <td className="p-3 font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => openMarksForStudent(s)}
+                        className="text-left text-navy-900 hover:text-royal-700 hover:underline font-bold"
+                        title="Click student name to enter marks"
+                      >
+                        {s.student_name}
+                      </button>
+                    </td>
                     <td className="p-3">{s.class_name} ({s.section})</td>
                     <td className="p-3 text-center font-bold">{s.attendance_percentage}% ({s.present_days}/{s.working_days})</td>
                     <td className="p-3 text-xs space-y-1">
                       {s.recent_marks.map((m, idx) => (
                         <div key={idx}>{m.exam} • {m.subject}: <strong>{m.marks_obtained}/{m.max_marks}</strong> ({m.status})</div>
                       ))}
+                    </td>
+                    <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => openMarksForStudent(s)}
+                        className="px-2.5 py-1 rounded-lg bg-navy-900 hover:bg-royal-600 text-white text-xs font-bold"
+                      >
+                        Enter Marks
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openFeeForStudent(s)}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold"
+                      >
+                        Collect Fee
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -637,11 +701,12 @@ export default function TeacherPortal() {
 
             {marksMode === "matrix" ? (
               <div className="space-y-4 p-4 rounded-xl bg-slate-50 border">
-                <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 text-sm">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-6 gap-3 text-sm">
                   <select
                     value={matrixCfg.class_id}
                     onChange={(e) => {
                       const cid = e.target.value;
+                      setFocusedStudentId("");
                       setMatrixCfg({ ...matrixCfg, class_id: cid, examination_id: "" });
                       loadAllSubjectsMatrix(cid, "");
                     }}
@@ -659,7 +724,7 @@ export default function TeacherPortal() {
                     }}
                     className="rounded-lg border px-3 py-2 bg-white"
                   >
-                    <option value="">2a. New Exam / Type Below</option>
+                    <option value="">2a. New Exam / Auto-Save</option>
                     {exams
                       .filter((ex) => !matrixCfg.class_id || String(ex.class_id) === String(matrixCfg.class_id))
                       .map((ex) => (
@@ -670,11 +735,32 @@ export default function TeacherPortal() {
                   </select>
                   <input
                     disabled={Boolean(matrixCfg.examination_id)}
-                    placeholder="2b. Or Type Exam / Re-Exam Name"
+                    placeholder="2b. Or Exam / Re-Exam Name"
                     value={matrixCfg.exam_name}
                     onChange={(e) => setMatrixCfg({ ...matrixCfg, exam_name: e.target.value })}
                     className="rounded-lg border px-3 py-2 bg-white disabled:bg-slate-100"
                   />
+                  <select
+                    value={matrixSubjectFilter}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setMatrixSubjectFilter(val);
+                      setMatrixSubjects((prev) =>
+                        prev.map((s) => ({
+                          ...s,
+                          included: !s.is_published && (!val || String(s.subject_id) === String(val)),
+                        }))
+                      );
+                    }}
+                    className="rounded-lg border px-3 py-2 bg-white font-semibold text-navy-900"
+                  >
+                    <option value="">Subject: All Subjects (Default)</option>
+                    {matrixSubjects.map((s) => (
+                      <option key={s.subject_id} value={s.subject_id}>
+                        Subject: {s.name}
+                      </option>
+                    ))}
+                  </select>
                   <select
                     disabled={Boolean(matrixCfg.examination_id)}
                     value={matrixCfg.exam_type}
@@ -694,6 +780,25 @@ export default function TeacherPortal() {
                     className="rounded-lg border px-3 py-2 bg-white text-xs"
                   />
                 </div>
+
+                {focusedStudentId && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs">
+                    <span>
+                      Showing selected student:{" "}
+                      <strong className="text-navy-900">
+                        {matrixRows.find((r) => String(r.student_id) === String(focusedStudentId))?.student_name || "Selected Student"}
+                      </strong>{" "}
+                      — enter marks by subject below and save directly.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setFocusedStudentId("")}
+                      className="px-2.5 py-1 rounded bg-navy-900 text-white font-bold"
+                    >
+                      Show Full Class Instead
+                    </button>
+                  </div>
+                )}
 
                 {matrixSubjects.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -759,7 +864,11 @@ export default function TeacherPortal() {
                           </tr>
                         </thead>
                         <tbody className="divide-y">
-                          {matrixRows.map((st, rIdx) => {
+                          {(focusedStudentId
+                            ? matrixRows.filter((r) => String(r.student_id) === String(focusedStudentId))
+                            : matrixRows
+                          ).map((st) => {
+                            const rIdx = matrixRows.findIndex((x) => x.student_id === st.student_id);
                             const activeCols = matrixSubjects.filter((s) => s.included);
                             let rowObt = 0;
                             let rowMax = 0;
@@ -816,59 +925,114 @@ export default function TeacherPortal() {
                         </tbody>
                       </table>
                     </div>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!matrixCfg.class_id) {
-                          notify("Select a class first.", "error");
-                          return;
-                        }
-                        if (!matrixCfg.examination_id && !matrixCfg.exam_name.trim()) {
-                          notify("Select an existing examination or type an Exam / Re-Exam name.", "error");
-                          return;
-                        }
-                        const selectedCols = matrixSubjects
-                          .filter((s) => s.included && !s.is_published)
-                          .map((s) => ({ subject_id: s.subject_id, max_marks: Number(s.max_marks) || 100 }));
-                        const entries = matrixRows
-                          .map((r) => {
-                            const scores = {};
-                            selectedCols.forEach((col) => {
-                              const raw = r.scores?.[col.subject_id];
-                              if (raw !== "" && raw !== undefined && raw !== null) {
-                                scores[col.subject_id] = Number(raw);
-                              }
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!matrixCfg.class_id) {
+                            notify("Select a class first.", "error");
+                            return;
+                          }
+                          const autoName = matrixCfg.exam_name.trim() || `Assessment ${new Date().toISOString().slice(0, 10)}`;
+                          const selectedCols = matrixSubjects
+                            .filter((s) => s.included && !s.is_published)
+                            .map((s) => ({ subject_id: s.subject_id, max_marks: Number(s.max_marks) || 100 }));
+                          const targetRows = focusedStudentId
+                            ? matrixRows.filter((r) => String(r.student_id) === String(focusedStudentId))
+                            : matrixRows;
+                          const entries = targetRows
+                            .map((r) => {
+                              const scores = {};
+                              selectedCols.forEach((col) => {
+                                const raw = r.scores?.[col.subject_id];
+                                if (raw !== "" && raw !== undefined && raw !== null) {
+                                  scores[col.subject_id] = Number(raw);
+                                }
+                              });
+                              return { student_id: r.student_id, scores, remarks: r.remarks || null };
+                            })
+                            .filter((r) => Object.keys(r.scores).length > 0);
+                          if (!entries.length) {
+                            notify("Enter at least one student mark across the grid.", "error");
+                            return;
+                          }
+                          try {
+                            const res = await api.post("/api/teacher/marks/bulk-all-subjects", {
+                              class_id: Number(matrixCfg.class_id),
+                              examination_id: matrixCfg.examination_id ? Number(matrixCfg.examination_id) : null,
+                              exam_name: matrixCfg.examination_id ? null : autoName,
+                              exam_type: matrixCfg.exam_type,
+                              exam_date: matrixCfg.exam_date || null,
+                              submit_for_approval: false,
+                              subjects: selectedCols,
+                              entries,
                             });
-                            return { student_id: r.student_id, scores, remarks: r.remarks || null };
-                          })
-                          .filter((r) => Object.keys(r.scores).length > 0);
-                        if (!entries.length) {
-                          notify("Enter at least one student mark across the grid.", "error");
-                          return;
-                        }
-                        try {
-                          const res = await api.post("/api/teacher/marks/bulk-all-subjects", {
-                            class_id: Number(matrixCfg.class_id),
-                            examination_id: matrixCfg.examination_id ? Number(matrixCfg.examination_id) : null,
-                            exam_name: matrixCfg.exam_name.trim() || null,
-                            exam_type: matrixCfg.exam_type,
-                            exam_date: matrixCfg.exam_date || null,
-                            submit_for_approval: true,
-                            subjects: selectedCols,
-                            entries,
-                          });
-                          notify(res.data.message);
-                          loadAll();
-                          loadAllSubjectsMatrix(matrixCfg.class_id, res.data.examination_id);
-                          setMatrixCfg((prev) => ({ ...prev, examination_id: String(res.data.examination_id), exam_name: "" }));
-                        } catch (err) {
-                          notify(err.response?.data?.detail || "Failed to submit all-subject marks.", "error");
-                        }
-                      }}
-                      className="px-6 py-2.5 rounded-xl bg-navy-900 hover:bg-royal-600 text-white text-sm font-bold"
-                    >
-                      Submit ALL Subject Marks for Admin Approval (PENDING)
-                    </button>
+                            notify(`Saved ${res.data.marks_saved} subject mark(s) for '${res.data.exam_name}'!`);
+                            loadAll();
+                            loadAllSubjectsMatrix(matrixCfg.class_id, res.data.examination_id);
+                            setMatrixCfg((prev) => ({ ...prev, examination_id: String(res.data.examination_id), exam_name: "" }));
+                          } catch (err) {
+                            notify(err.response?.data?.detail || "Failed to save marks.", "error");
+                          }
+                        }}
+                        className="px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-bold"
+                      >
+                        Save Marks (Default Subject Sheet)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!matrixCfg.class_id) {
+                            notify("Select a class first.", "error");
+                            return;
+                          }
+                          const autoName = matrixCfg.exam_name.trim() || `Assessment ${new Date().toISOString().slice(0, 10)}`;
+                          const selectedCols = matrixSubjects
+                            .filter((s) => s.included && !s.is_published)
+                            .map((s) => ({ subject_id: s.subject_id, max_marks: Number(s.max_marks) || 100 }));
+                          const targetRows = focusedStudentId
+                            ? matrixRows.filter((r) => String(r.student_id) === String(focusedStudentId))
+                            : matrixRows;
+                          const entries = targetRows
+                            .map((r) => {
+                              const scores = {};
+                              selectedCols.forEach((col) => {
+                                const raw = r.scores?.[col.subject_id];
+                                if (raw !== "" && raw !== undefined && raw !== null) {
+                                  scores[col.subject_id] = Number(raw);
+                                }
+                              });
+                              return { student_id: r.student_id, scores, remarks: r.remarks || null };
+                            })
+                            .filter((r) => Object.keys(r.scores).length > 0);
+                          if (!entries.length) {
+                            notify("Enter at least one student mark across the grid.", "error");
+                            return;
+                          }
+                          try {
+                            const res = await api.post("/api/teacher/marks/bulk-all-subjects", {
+                              class_id: Number(matrixCfg.class_id),
+                              examination_id: matrixCfg.examination_id ? Number(matrixCfg.examination_id) : null,
+                              exam_name: matrixCfg.examination_id ? null : autoName,
+                              exam_type: matrixCfg.exam_type,
+                              exam_date: matrixCfg.exam_date || null,
+                              submit_for_approval: true,
+                              subjects: selectedCols,
+                              entries,
+                            });
+                            notify(res.data.message);
+                            loadAll();
+                            loadAllSubjectsMatrix(matrixCfg.class_id, res.data.examination_id);
+                            setMatrixCfg((prev) => ({ ...prev, examination_id: String(res.data.examination_id), exam_name: "" }));
+                          } catch (err) {
+                            notify(err.response?.data?.detail || "Failed to submit all-subject marks.", "error");
+                          }
+                        }}
+                        className="px-6 py-2.5 rounded-xl bg-navy-900 hover:bg-royal-600 text-white text-sm font-bold"
+                      >
+                        Save &amp; Submit ALL Subject Marks for Admin Approval
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500">
@@ -1549,6 +1713,203 @@ export default function TeacherPortal() {
                 <button type="submit" className="px-5 py-2 rounded-lg bg-navy-900 text-white font-semibold">Add Student</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* TEACHER FEE COLLECTION -> SENT TO ADMIN VERIFICATION */}
+      {tab === "fees" && (
+        <div className="space-y-6">
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                const res = await api.post("/api/teacher/fees/collect", {
+                  ...feeForm,
+                  student_id: Number(feeForm.student_id),
+                  amount: Number(feeForm.amount),
+                  idempotency_key: `TFEE-${feeForm.student_id}-${Date.now()}`,
+                });
+                notify(res.data.message);
+                setFeeForm({
+                  student_id: "",
+                  amount: "",
+                  payment_mode: "CASH",
+                  payment_date: new Date().toISOString().slice(0, 10),
+                  reference_number: "",
+                  remarks: "",
+                });
+                loadAll();
+              } catch (err) {
+                notify(err.response?.data?.detail || "Could not submit fee collection.", "error");
+              }
+            }}
+            className="bg-white rounded-2xl p-5 shadow-sm border space-y-4"
+          >
+            <div>
+              <h3 className="font-bold text-navy-900 text-lg">Collect Student Fees (Send to Admin Verification)</h3>
+              <p className="text-xs text-slate-600">
+                Record collected tuition fees for any student. Once submitted, Admin verifies &amp; approves the collection, issues the <strong>Official PDF Receipt</strong>, and triggers SMS/WhatsApp receipt confirmation.
+              </p>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
+              <select
+                required
+                value={feeForm.student_id}
+                onChange={(e) => setFeeForm({ ...feeForm, student_id: e.target.value })}
+                className="rounded-lg border px-3 py-2 bg-white font-semibold"
+              >
+                <option value="">Select Student *</option>
+                {(feeData.students || []).map((st) => (
+                  <option key={st.student_id} value={st.student_id}>
+                    {st.student_code} - {st.student_name} ({st.class_name}) [Pending: Rs. {st.pending_amount}]
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                required
+                min={1}
+                step="0.01"
+                placeholder="Amount Collected (Rs.) *"
+                value={feeForm.amount}
+                onChange={(e) => setFeeForm({ ...feeForm, amount: e.target.value })}
+                className="rounded-lg border px-3 py-2"
+              />
+              <select
+                value={feeForm.payment_mode}
+                onChange={(e) => setFeeForm({ ...feeForm, payment_mode: e.target.value })}
+                className="rounded-lg border px-3 py-2 bg-white"
+              >
+                <option value="CASH">Cash</option>
+                <option value="UPI">UPI</option>
+                <option value="BANK_TRANSFER">Bank Transfer</option>
+                <option value="OTHER">Other / Cheque</option>
+              </select>
+              <input
+                type="date"
+                value={feeForm.payment_date}
+                onChange={(e) => setFeeForm({ ...feeForm, payment_date: e.target.value })}
+                className="rounded-lg border px-3 py-2"
+              />
+              <input
+                placeholder="Transaction / Receipt Ref (Optional)"
+                value={feeForm.reference_number}
+                onChange={(e) => setFeeForm({ ...feeForm, reference_number: e.target.value })}
+                className="rounded-lg border px-3 py-2"
+              />
+              <input
+                placeholder="Remarks (Optional)"
+                value={feeForm.remarks}
+                onChange={(e) => setFeeForm({ ...feeForm, remarks: e.target.value })}
+                className="rounded-lg border px-3 py-2"
+              />
+            </div>
+            <button type="submit" className="px-6 py-2.5 rounded-xl bg-navy-900 hover:bg-royal-600 text-white text-sm font-bold">
+              Submit Fee Collection to Admin for Verification
+            </button>
+          </form>
+
+          <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+            <div className="p-4 border-b font-bold text-navy-900">Recent Fee Collections &amp; Verified PDF Receipts</div>
+            <table className="w-full text-xs">
+              <thead className="bg-navy-900 text-white uppercase">
+                <tr>
+                  <th className="p-3 text-left">Date</th>
+                  <th className="p-3 text-left">Student</th>
+                  <th className="p-3 text-left">Class</th>
+                  <th className="p-3 text-center">Amount</th>
+                  <th className="p-3 text-center">Mode</th>
+                  <th className="p-3 text-center">Status</th>
+                  <th className="p-3 text-right">PDF Receipt &amp; SMS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {(feeData.collections || []).map((p) => (
+                  <tr key={p.id}>
+                    <td className="p-3">{p.payment_date}</td>
+                    <td className="p-3 font-semibold">{p.student_code} - {p.student_name}</td>
+                    <td className="p-3">{p.class_name}</td>
+                    <td className="p-3 text-center font-bold">Rs. {p.amount.toLocaleString()}</td>
+                    <td className="p-3 text-center">{p.payment_mode}</td>
+                    <td className="p-3 text-center">
+                      <span className={`px-2 py-0.5 rounded-full font-bold ${
+                        p.status === "VERIFIED" ? "bg-emerald-100 text-emerald-800" :
+                        p.status === "REJECTED" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"
+                      }`}>
+                        {p.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                      {p.status === "VERIFIED" ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => downloadAuthorizedFile(`/api/teacher/fees/${p.id}/receipt-pdf`, `AK_Receipt_${p.student_code}_${p.id}.pdf`)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-navy-900 text-white font-bold"
+                          >
+                            <Download className="w-3.5 h-3.5" /> PDF ({p.receipt_number})
+                          </button>
+                          {p.sms_url && (
+                            <a href={p.sms_url} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-royal-600 text-white font-bold">
+                              SMS PDF
+                            </a>
+                          )}
+                          {p.whatsapp_url && (
+                            <a href={p.whatsapp_url} target="_blank" rel="noreferrer" className="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold">
+                              WhatsApp PDF
+                            </a>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-slate-400">Waiting Admin Verification</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* HOW TO USE GUIDE */}
+      {tab === "guide" && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border space-y-5">
+          <div>
+            <h3 className="font-bold text-navy-900 text-xl">AK Tuition Portal — Step-by-Step Teacher Guide</h3>
+            <p className="text-xs text-slate-600 mt-1">
+              Quick visual instructions for every daily workflow in AKTP Portal.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4 text-sm">
+            {[
+              {
+                step: "Step 1: Add Students & Take Unified Attendance",
+                desc: "Open All Students to add a student (auto AK ID + instant login credentials). In Daily Attendance, mark Absent students once and Save — absence alerts prepare/send automatically to parent numbers and your Group.",
+              },
+              {
+                step: "Step 2: Click Any Student Name -> Enter Marks by Subject",
+                desc: "In All Students, simply click a student's name (or 'Enter Marks'). It opens Marks Entry with All Subjects loaded by default and a Subject filter dropdown. Enter scores per subject and click 'Save Marks' or 'Save & Submit ALL Subject Marks'.",
+              },
+              {
+                step: "Step 3: Collect Fees -> Admin Verifies -> Official PDF + SMS",
+                desc: "Open 'Collect Fees' (or click 'Collect Fee' on a student row), enter collected amount and Cash/UPI mode, and submit to Admin. Once Admin clicks Verify, an official Receipt PDF is generated and can be sent via SMS/WhatsApp.",
+              },
+              {
+                step: "Step 4: Auto Question Papers & Custom Watermarks",
+                desc: "Open 'Question Papers', enter a topic & Total Marks, type a Watermark (e.g. AK TUITION), and click 'Auto-Create Questions'. Download the watermarked PDF anytime.",
+              },
+              {
+                step: "Step 5: Result Publishing & 15-Day Shareable Link",
+                desc: "After Teacher submits marks, Admin clicks 'Publish All & Announce Results'. Students immediately view & download digitally signed Marks Cards on /results (valid 15 days publicly; permanent in Student/Parent login).",
+              },
+            ].map((card) => (
+              <div key={card.step} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                <div className="font-bold text-navy-900">{card.step}</div>
+                <p className="text-xs text-slate-600 leading-relaxed">{card.desc}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}

@@ -40,6 +40,7 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    AdminFeeReviewRequest,
     AnnouncementCreate,
     ClassCreate,
     ClassSubjectAssign,
@@ -61,7 +62,7 @@ from app.schemas import (
     TeacherCreate,
     TeacherUpdate,
 )
-from app.security import hash_password, log_audit, require_roles
+from app.security import create_signed_payload, hash_password, log_audit, require_roles
 from app.services.excel_generator import generate_excel_report
 from app.services.helpers import (
     compute_class_rank,
@@ -869,7 +870,56 @@ def list_fees(class_id: Optional[int] = None, search: Optional[str] = None, db: 
         q = q.filter((Student.student_name.ilike(like)) | (Student.student_code.ilike(like)))
     fees = q.order_by(Student.student_code.asc()).all()
 
-    payments = db.query(Payment).order_by(Payment.payment_date.desc(), Payment.id.desc()).limit(100).all()
+    verified_payments = (
+        db.query(Payment)
+        .filter(Payment.status == "VERIFIED")
+        .order_by(Payment.payment_date.desc(), Payment.id.desc())
+        .limit(120)
+        .all()
+    )
+    pending_payments = (
+        db.query(Payment)
+        .filter(Payment.status == "PENDING")
+        .order_by(Payment.created_at.desc(), Payment.id.desc())
+        .all()
+    )
+
+    def _serialize_pay(p: Payment):
+        st = p.student
+        rec_no = p.receipt.receipt_number if p.receipt else None
+        pdf_tok = create_signed_payload({"pid": p.id}, expire_minutes=60 * 24 * 30) if p.status == "VERIFIED" else None
+        pdf_url = f"https://aktp-backend-production.up.railway.app/api/public/fee-receipt/pdf?token={pdf_tok}" if pdf_tok else None
+        msg = (
+            f"AK TUITION - FEE RECEIPT VERIFIED\n"
+            f"Receipt: {rec_no or f'AKR-{p.id}'}\n"
+            f"Student: {st.student_name if st else ''} ({st.student_code if st else ''})\n"
+            f"Amount Paid: Rs. {float(p.amount):,.2f} ({p.payment_mode})\n"
+            f"Download PDF Receipt: {pdf_url}"
+            if pdf_url and st
+            else ""
+        )
+        links = build_direct_links(st.parent_phone, msg) if pdf_url and st else {"whatsapp_url": None, "sms_url": None}
+        rec_user = db.query(User).filter(User.id == p.recorded_by_user_id).first()
+        return {
+            "id": p.id,
+            "student_id": p.student_id,
+            "student_code": st.student_code if st else "",
+            "student_name": st.student_name if st else "",
+            "class_name": f"{st.school_class.name} ({st.section})" if st and st.school_class else "",
+            "parent_phone": st.parent_phone if st else "",
+            "amount": float(p.amount),
+            "payment_date": p.payment_date.isoformat(),
+            "payment_mode": p.payment_mode,
+            "reference_number": p.reference_number,
+            "remarks": p.remarks,
+            "status": p.status,
+            "recorded_by": rec_user.full_name if rec_user else "Admin",
+            "receipt_number": rec_no,
+            "receipt_pdf_url": pdf_url,
+            "whatsapp_url": links["whatsapp_url"],
+            "sms_url": links["sms_url"],
+            "created_at": p.created_at.isoformat(),
+        }
 
     return {
         "student_fees": [
@@ -888,21 +938,8 @@ def list_fees(class_id: Optional[int] = None, search: Optional[str] = None, db: 
             }
             for f in fees
         ],
-        "payments": [
-            {
-                "id": p.id,
-                "student_id": p.student_id,
-                "student_code": p.student.student_code if p.student else "",
-                "student_name": p.student.student_name if p.student else "",
-                "amount": float(p.amount),
-                "payment_date": p.payment_date.isoformat(),
-                "payment_mode": p.payment_mode,
-                "reference_number": p.reference_number,
-                "remarks": p.remarks,
-                "receipt_number": p.receipt.receipt_number if p.receipt else None,
-            }
-            for p in payments
-        ],
+        "pending_collections": [_serialize_pay(p) for p in pending_payments],
+        "payments": [_serialize_pay(p) for p in verified_payments],
     }
 
 
@@ -952,6 +989,9 @@ def record_payment(payload: PaymentCreate, request: Request, current_user: User 
         reference_number=payload.reference_number.strip() if payload.reference_number else None,
         idempotency_key=payload.idempotency_key,
         remarks=payload.remarks,
+        status="VERIFIED",
+        verified_by_user_id=current_user.id,
+        verified_at=datetime.utcnow(),
         recorded_by_user_id=current_user.id,
     )
     db.add(pay)
@@ -963,10 +1003,195 @@ def record_payment(payload: PaymentCreate, request: Request, current_user: User 
     receipt_no = f"AKR-{datetime.now().year}-{pay.id:04d}"
     receipt = FeeReceipt(payment_id=pay.id, receipt_number=receipt_no)
     db.add(receipt)
+    db.flush()
+
+    settings = get_or_create_settings(db)
+    st = fee.student
+    pdf_tok = create_signed_payload({"pid": pay.id}, expire_minutes=60 * 24 * 30)
+    pdf_url = f"https://aktp-backend-production.up.railway.app/api/public/fee-receipt/pdf?token={pdf_tok}"
+    receipt_msg = (
+        f"AK TUITION - FEE RECEIPT VERIFIED\n"
+        f"Receipt: {receipt_no}\n"
+        f"Student: {st.student_name} ({st.student_code})\n"
+        f"Paid: Rs. {float(pay.amount):,.2f} ({mode})\n"
+        f"Total Paid: Rs. {float(fee.paid_amount):,.2f} | Balance: Rs. {float(fee.pending_amount):,.2f}\n"
+        f"Download PDF Receipt: {pdf_url}\n"
+        f"- Verified by {settings.director_name}"
+    )
+    send_notification(
+        db,
+        recipient_phone=st.parent_phone,
+        channel="WHATSAPP",
+        notification_type="FEE_RECEIPT",
+        message=receipt_msg,
+        dedup_key=f"FEE_VERIFIED_WA_{pay.id}",
+        recipient_user_id=st.parent.user_id if st.parent else None,
+        student_id=st.id,
+        parent_id=st.parent_id,
+    )
+    if gateway_status_summary(settings)["sms_live"]:
+        send_notification(
+            db,
+            recipient_phone=st.parent_phone,
+            channel="SMS",
+            notification_type="FEE_RECEIPT",
+            message=receipt_msg,
+            dedup_key=f"FEE_VERIFIED_SMS_{pay.id}",
+            recipient_user_id=st.parent.user_id if st.parent else None,
+            student_id=st.id,
+            parent_id=st.parent_id,
+        )
+    dispatch_group_workflow_event(
+        db,
+        event_type="FEE_VERIFIED",
+        title=f"Fee Receipt Issued ({receipt_no})",
+        message=f"Rs. {float(pay.amount):,.2f} verified for {st.student_name} ({st.student_code}).",
+        entity_id=str(pay.id),
+    )
     log_audit(db, current_user.id, "RECORD_PAYMENT", "payment", str(pay.id), {"amount": payload.amount, "mode": mode}, request)
     db.commit()
 
-    return {"id": pay.id, "receipt_number": receipt_no, "pending_amount": float(fee.pending_amount)}
+    links = build_direct_links(st.parent_phone, receipt_msg)
+    return {
+        "id": pay.id,
+        "receipt_number": receipt_no,
+        "pending_amount": float(fee.pending_amount),
+        "receipt_pdf_url": pdf_url,
+        "whatsapp_url": links["whatsapp_url"],
+        "sms_url": links["sms_url"],
+    }
+
+
+@router.post("/fee-collections/{payment_id}/review")
+def review_teacher_fee_collection(
+    payment_id: int,
+    payload: AdminFeeReviewRequest,
+    request: Request,
+    current_user: User = Depends(require_roles(["admin"])),
+    db: Session = Depends(get_db),
+):
+    pay = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not pay:
+        raise HTTPException(status_code=404, detail="Fee collection record not found.")
+    if pay.status != "PENDING":
+        raise HTTPException(status_code=400, detail=f"This fee collection is already {pay.status}.")
+
+    action = payload.action.strip().upper()
+    st = pay.student
+    fee = pay.fee
+    settings = get_or_create_settings(db)
+
+    if action == "REJECT":
+        pay.status = "REJECTED"
+        pay.verified_by_user_id = current_user.id
+        pay.verified_at = datetime.utcnow()
+        if payload.rejection_reason:
+            pay.remarks = f"{pay.remarks or ''} [Rejected: {payload.rejection_reason.strip()}]".strip()
+        dispatch_group_workflow_event(
+            db,
+            event_type="FEE_REJECTED",
+            title="Fee Collection Rejected",
+            message=f"Collection #{pay.id} (Rs. {float(pay.amount):,.2f} for {st.student_name}) was rejected by Admin.",
+            entity_id=str(pay.id),
+        )
+        log_audit(db, current_user.id, "REJECT_FEE_COLLECTION", "payment", str(pay.id), {"reason": payload.rejection_reason}, request)
+        db.commit()
+        return {"id": pay.id, "status": "REJECTED", "message": "Fee collection rejected."}
+
+    if action != "APPROVE":
+        raise HTTPException(status_code=400, detail="Action must be APPROVE or REJECT.")
+
+    pay.status = "VERIFIED"
+    pay.verified_by_user_id = current_user.id
+    pay.verified_at = datetime.utcnow()
+    fee.paid_amount = float(fee.paid_amount) + float(pay.amount)
+    fee.pending_amount = max(0.0, float(fee.total_fees) - float(fee.paid_amount))
+
+    receipt_no = f"AKR-{datetime.now().year}-{pay.id:04d}"
+    if not pay.receipt:
+        db.add(FeeReceipt(payment_id=pay.id, receipt_number=receipt_no))
+    else:
+        receipt_no = pay.receipt.receipt_number
+    db.flush()
+
+    pdf_tok = create_signed_payload({"pid": pay.id}, expire_minutes=60 * 24 * 30)
+    pdf_url = f"https://aktp-backend-production.up.railway.app/api/public/fee-receipt/pdf?token={pdf_tok}"
+    receipt_msg = (
+        f"AK TUITION - FEE RECEIPT VERIFIED\n"
+        f"Receipt: {receipt_no}\n"
+        f"Student: {st.student_name} ({st.student_code})\n"
+        f"Amount Paid: Rs. {float(pay.amount):,.2f} ({pay.payment_mode})\n"
+        f"Total Paid: Rs. {float(fee.paid_amount):,.2f} | Balance: Rs. {float(fee.pending_amount):,.2f}\n"
+        f"Download PDF Receipt: {pdf_url}\n"
+        f"- Verified by {settings.director_name}"
+    )
+
+    dispatches = []
+    if payload.send_notifications:
+        gw_mode = gateway_status_summary(settings)
+        seen = set()
+        targets = [("parent", st.parent_phone, st.parent.user_id if st.parent else None, st.parent_id)]
+        if st.student_phone:
+            targets.append(("student", st.student_phone, st.user_id, None))
+        for tgt, raw_phone, uid, pid in targets:
+            clean_p = (raw_phone or "").strip()
+            tail = "".join(c for c in clean_p if c.isdigit())[-10:]
+            if not clean_p or tail in seen:
+                continue
+            seen.add(tail)
+            n_wa = send_notification(
+                db,
+                recipient_phone=clean_p,
+                channel="WHATSAPP",
+                notification_type="FEE_RECEIPT",
+                message=receipt_msg,
+                dedup_key=f"FEE_APPROVE_WA_{pay.id}_{tail}",
+                recipient_user_id=uid,
+                student_id=st.id,
+                parent_id=pid,
+            )
+            if gw_mode["sms_live"]:
+                send_notification(
+                    db,
+                    recipient_phone=clean_p,
+                    channel="SMS",
+                    notification_type="FEE_RECEIPT",
+                    message=receipt_msg,
+                    dedup_key=f"FEE_APPROVE_SMS_{pay.id}_{tail}",
+                    recipient_user_id=uid,
+                    student_id=st.id,
+                    parent_id=pid,
+                )
+            links = build_direct_links(clean_p, receipt_msg)
+            dispatches.append({
+                "target": tgt,
+                "phone": clean_p,
+                "status": n_wa.status,
+                "provider": n_wa.provider,
+                "message": receipt_msg,
+                "whatsapp_url": links["whatsapp_url"],
+                "sms_url": links["sms_url"],
+            })
+
+    dispatch_group_workflow_event(
+        db,
+        event_type="FEE_VERIFIED",
+        title=f"Fee Collection Verified ({receipt_no})",
+        message=f"Admin verified Rs. {float(pay.amount):,.2f} ({pay.payment_mode}) for {st.student_name} ({st.student_code}). Balance: Rs. {float(fee.pending_amount):,.2f}.",
+        entity_id=str(pay.id),
+    )
+    log_audit(db, current_user.id, "APPROVE_FEE_COLLECTION", "payment", str(pay.id), {"receipt": receipt_no, "amount": float(pay.amount)}, request)
+    db.commit()
+
+    return {
+        "id": pay.id,
+        "status": "VERIFIED",
+        "receipt_number": receipt_no,
+        "pending_amount": float(fee.pending_amount),
+        "receipt_pdf_url": pdf_url,
+        "dispatches": dispatches,
+        "message": f"Verified payment & issued Receipt {receipt_no}! SMS/WhatsApp & PDF link ready.",
+    }
 
 
 @router.get("/payments/{payment_id}/receipt-pdf")
@@ -1922,7 +2147,7 @@ def generate_report(
 
     elif rt in ("fee_collection", "student_payment_history"):
         title = "Student Payment History Report" if rt == "student_payment_history" else "Fee Collection Report"
-        q = db.query(Payment).join(Student)
+        q = db.query(Payment).join(Student).filter(Payment.status == "VERIFIED")
         if class_id:
             q = q.filter(Student.class_id == class_id)
         if student_id:

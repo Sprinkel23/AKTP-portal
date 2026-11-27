@@ -536,6 +536,41 @@ def run_verification():
         group_events = [n for n in notif_list["notifications"] if n["channel"] == "GROUP"]
         assert len(group_events) >= 3 and "auto_notify_group_on_events" in notif_list["mode"]
 
+        # 11. Teacher Fee Collection -> Admin Verification -> Signed PDF Receipt & SMS/WhatsApp Link
+        tfee_post = client.post(
+            "/api/teacher/fees/collect",
+            headers=auth_header(teacher_auth["access_token"]),
+            json={
+                "student_id": new_sid,
+                "amount": 1500,
+                "payment_mode": "UPI",
+                "reference_number": f"TFEE-REF-{run_tag}",
+                "remarks": "Part fee collected in class",
+            },
+        )
+        assert tfee_post.status_code == 200 and tfee_post.json()["status"] == "PENDING", tfee_post.text
+        pay_id = tfee_post.json()["id"]
+
+        admin_fees_before = client.get("/api/admin/fees", headers=auth_header(admin_auth["access_token"])).json()
+        assert any(p["id"] == pay_id for p in admin_fees_before["pending_collections"])
+
+        fee_rev = client.post(
+            f"/api/admin/fee-collections/{pay_id}/review",
+            headers=auth_header(admin_auth["access_token"]),
+            json={"action": "APPROVE", "send_notifications": True},
+        )
+        assert fee_rev.status_code == 200 and fee_rev.json()["status"] == "VERIFIED", fee_rev.text
+        assert fee_rev.json()["receipt_number"].startswith("AKR-")
+        assert len(fee_rev.json()["dispatches"]) >= 1
+        assert fee_rev.json()["dispatches"][0]["sms_url"].startswith("sms:+")
+
+        t_pdf_rec = client.get(f"/api/teacher/fees/{pay_id}/receipt-pdf", headers=auth_header(teacher_auth["access_token"]))
+        assert t_pdf_rec.status_code == 200 and t_pdf_rec.content.startswith(b"%PDF")
+
+        pub_token = fee_rev.json()["receipt_pdf_url"].split("token=")[-1]
+        pub_pdf_rec = client.get(f"/api/public/fee-receipt/pdf?token={pub_token}")
+        assert pub_pdf_rec.status_code == 200 and pub_pdf_rec.content.startswith(b"%PDF")
+
         # Cleanup test student so seeded state stays tidy
         client.delete(f"/api/admin/students/{new_sid}?hard_delete=true", headers=auth_header(admin_auth["access_token"]))
         print("ALL_END_TO_END_PORTAL_TESTS_PASSED")

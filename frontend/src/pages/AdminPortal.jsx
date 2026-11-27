@@ -33,6 +33,7 @@ import {
   Eye,
   KeyRound,
   Copy,
+  HelpCircle,
 } from "lucide-react";
 import PortalLayout from "../components/PortalLayout";
 import api, { downloadAuthorizedFile, resolveAssetUrl } from "../api/client";
@@ -124,6 +125,8 @@ export default function AdminPortal() {
   const [rejectReasonMap, setRejectReasonMap] = useState({});
   const [notifFilter, setNotifFilter] = useState("ALL");
   const [testGatewayPhone, setTestGatewayPhone] = useState("");
+  const [feeData, setFeeData] = useState({ student_fees: [], pending_collections: [], payments: [] });
+  const [feeDispatches, setFeeDispatches] = useState([]);
   const [annForm, setAnnForm] = useState({ title: "", category: "NOTICE", content: "", event_date: "", target_audience: "PUBLIC", is_featured: false, image_path: "" });
   const [notifForm, setNotifForm] = useState({ notification_type: "ANNOUNCEMENT", channel: "SMS", class_id: "", message: "" });
   const [reportFilters, setReportFilters] = useState({ class_id: "", student_id: "", examination_id: "", subject_id: "", start_date: "", end_date: "" });
@@ -135,7 +138,7 @@ export default function AdminPortal() {
 
   const loadAll = async () => {
     try {
-      const [dRes, sRes, tRes, cRes, subRes, exRes, apRes, anRes, nRes, setRes] = await Promise.all([
+      const [dRes, sRes, tRes, cRes, subRes, exRes, apRes, anRes, nRes, setRes, fRes] = await Promise.all([
         api.get("/api/admin/dashboard"),
         api.get("/api/admin/students"),
         api.get("/api/admin/teachers"),
@@ -146,6 +149,7 @@ export default function AdminPortal() {
         api.get("/api/admin/announcements"),
         api.get("/api/admin/notifications"),
         api.get("/api/admin/settings"),
+        api.get("/api/admin/fees").catch(() => ({ data: { student_fees: [], pending_collections: [], payments: [] } })),
       ]);
       setDash(dRes.data);
       setStudents(sRes.data);
@@ -157,6 +161,7 @@ export default function AdminPortal() {
       setAnnouncements(anRes.data);
       setNotifData(nRes.data);
       setSettings(setRes.data);
+      setFeeData(fRes.data || { student_fees: [], pending_collections: [], payments: [] });
     } catch (e) {
       notify(e.response?.data?.detail || "Error loading admin data", "error");
     }
@@ -176,6 +181,7 @@ export default function AdminPortal() {
   }, [tab]);
 
   const pendingCount = approvals.filter((a) => a.status === "PENDING").length;
+  const pendingFeeCount = (feeData.pending_collections || []).length;
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -184,10 +190,12 @@ export default function AdminPortal() {
     { id: "classes", label: "Classes & Subjects", icon: BookOpen },
     { id: "examinations", label: "Examinations", icon: Calendar },
     { id: "approvals", label: "Result Approvals", icon: CheckSquare, badge: pendingCount },
+    { id: "fees", label: "Fee Approvals & Receipts", icon: IndianRupee, badge: pendingFeeCount },
     { id: "notifications", label: "WhatsApp & SMS Alerts", icon: Bell },
     { id: "announcements", label: "News & Notices", icon: Megaphone },
     { id: "reports", label: "PDF & Excel Reports", icon: FileSpreadsheet },
     { id: "settings", label: "Settings & Audit", icon: Settings },
+    { id: "guide", label: "How to Use Guide", icon: HelpCircle },
   ];
 
   // Handlers
@@ -951,6 +959,155 @@ export default function AdminPortal() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* FEE APPROVALS & OFFICIAL RECEIPTS */}
+      {tab === "fees" && (
+        <div className="space-y-6">
+          <div className="bg-amber-50 border border-gold-400 rounded-2xl p-4 text-sm text-navy-900">
+            <strong>Teacher Fee Verification Workflow:</strong> Fees collected by teachers appear below as <strong>PENDING</strong>. Click <strong>Verify &amp; Approve</strong> to credit the student balance, generate the signed <strong>Official Fee Receipt PDF</strong>, and prepare/send the SMS &amp; WhatsApp receipt link to the parent.
+          </div>
+
+          {feeDispatches.length > 0 && (
+            <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="font-bold text-emerald-900 text-sm">Verified Fee Receipt SMS &amp; WhatsApp Ready</div>
+                <button onClick={() => setFeeDispatches([])} className="text-xs text-slate-500 hover:underline">Dismiss</button>
+              </div>
+              {feeDispatches.map((d, i) => (
+                <div key={i} className="p-2.5 rounded-lg bg-white border flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div>
+                    <strong className="uppercase">{d.target}</strong>: <span className="font-mono font-bold">{d.phone}</span>
+                    <span className={`ml-2 px-2 py-0.5 rounded font-bold ${d.status === "SENT" ? "bg-emerald-100 text-emerald-800" : "bg-blue-50 text-royal-700"}`}>
+                      {d.status === "SENT" ? "AUTO SENT" : "READY TO SEND"}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    {d.sms_url && (
+                      <a href={d.sms_url} className="px-3 py-1 rounded-lg bg-navy-900 text-white font-bold">
+                        Send SMS with PDF Link
+                      </a>
+                    )}
+                    {d.whatsapp_url && (
+                      <a href={d.whatsapp_url} target="_blank" rel="noreferrer" className="px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold">
+                        Send WhatsApp PDF
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+            <div className="p-4 border-b font-bold text-navy-900 flex items-center justify-between">
+              <span>Pending Teacher Fee Collections ({pendingFeeCount})</span>
+            </div>
+            {(feeData.pending_collections || []).length === 0 ? (
+              <div className="p-6 text-sm text-slate-500 text-center">No pending teacher fee collections awaiting verification.</div>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="bg-navy-900 text-white uppercase">
+                  <tr>
+                    <th className="p-3 text-left">Date</th>
+                    <th className="p-3 text-left">Student</th>
+                    <th className="p-3 text-left">Collected By</th>
+                    <th className="p-3 text-center">Amount</th>
+                    <th className="p-3 text-center">Mode</th>
+                    <th className="p-3 text-right">Verify / Reject</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {feeData.pending_collections.map((p) => (
+                    <tr key={p.id}>
+                      <td className="p-3">{p.payment_date}</td>
+                      <td className="p-3 font-semibold">{p.student_code} - {p.student_name} ({p.class_name})</td>
+                      <td className="p-3">{p.recorded_by}</td>
+                      <td className="p-3 text-center font-bold text-navy-900">Rs. {p.amount.toLocaleString()}</td>
+                      <td className="p-3 text-center">{p.payment_mode} {p.reference_number ? `(${p.reference_number})` : ""}</td>
+                      <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await api.post(`/api/admin/fee-collections/${p.id}/review`, { action: "APPROVE", send_notifications: true });
+                              setFeeDispatches(res.data.dispatches || []);
+                              notify(res.data.message);
+                              loadAll();
+                            } catch (err) {
+                              notify(err.response?.data?.detail || "Verification failed.", "error");
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold"
+                        >
+                          Verify &amp; Approve (PDF + SMS)
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api.post(`/api/admin/fee-collections/${p.id}/review`, { action: "REJECT", rejection_reason: "Rejected by Admin" });
+                              notify("Fee collection rejected.");
+                              loadAll();
+                            } catch (err) {
+                              notify(err.response?.data?.detail || "Rejection failed.", "error");
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold"
+                        >
+                          Reject
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border overflow-x-auto">
+            <div className="p-4 border-b font-bold text-navy-900">Verified Payments &amp; Official Fee Receipt PDFs</div>
+            <table className="w-full text-xs">
+              <thead className="bg-slate-100 uppercase">
+                <tr>
+                  <th className="p-3 text-left">Receipt No</th>
+                  <th className="p-3 text-left">Date</th>
+                  <th className="p-3 text-left">Student</th>
+                  <th className="p-3 text-center">Amount</th>
+                  <th className="p-3 text-center">Mode</th>
+                  <th className="p-3 text-right">Download PDF / Send SMS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {(feeData.payments || []).map((p) => (
+                  <tr key={p.id}>
+                    <td className="p-3 font-mono font-bold text-royal-700">{p.receipt_number || `AKR-${p.id}`}</td>
+                    <td className="p-3">{p.payment_date}</td>
+                    <td className="p-3 font-semibold">{p.student_code} - {p.student_name}</td>
+                    <td className="p-3 text-center font-bold">Rs. {p.amount.toLocaleString()}</td>
+                    <td className="p-3 text-center">{p.payment_mode}</td>
+                    <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                      <button
+                        onClick={() => downloadAuthorizedFile(`/api/admin/payments/${p.id}/receipt-pdf`, `AK_Receipt_${p.student_code}_${p.id}.pdf`)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-navy-900 text-white font-bold"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Receipt PDF
+                      </button>
+                      {p.sms_url && (
+                        <a href={p.sms_url} className="inline-flex items-center px-2.5 py-1 rounded-lg bg-royal-600 text-white font-bold">
+                          SMS PDF Link
+                        </a>
+                      )}
+                      {p.whatsapp_url && (
+                        <a href={p.whatsapp_url} target="_blank" rel="noreferrer" className="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold">
+                          WhatsApp PDF
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -1728,6 +1885,43 @@ export default function AdminPortal() {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* HOW TO USE PORTAL GUIDE */}
+      {tab === "guide" && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border space-y-5">
+          <div>
+            <h3 className="font-bold text-navy-900 text-xl">How to Use AKTP Portal — Complete Administrator Guide</h3>
+            <p className="text-xs text-slate-600 mt-1">
+              End-to-end guide for managing Students, All-Subjects Marks, Verified Fee Receipts, Automatic Server Gateways, and 15-Day Shareable Results.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4 text-sm">
+            {[
+              {
+                step: "1. Automatic SMS / WhatsApp & Group Setup (Zero Browser Prompt)",
+                desc: "Go to Settings -> Full Automatic Server Gateway. Add a WhatsApp Gateway Webhook URL (Ultramsg/GreenAPI/WAHA), optional WhatsApp Group ID, or MSG91/SMS Webhook URL, or a free Telegram Bot + Group Chat ID, then click 'Save & Test Gateway Now'. Every portal event & result declaration then dispatches automatically from the server.",
+              },
+              {
+                step: "2. Teacher Clicks Student Name -> All Subjects Marks",
+                desc: "Teachers open All Students and click any student's name to jump into Marks Entry with All Subjects loaded by default (or filter a single subject), type marks, and save or submit for your approval.",
+              },
+              {
+                step: "3. Teacher Fee Collection -> Admin Verification -> PDF + SMS",
+                desc: "Teachers enter collected student fees under 'Collect Fees'. Open 'Fee Approvals & Receipts' here, click 'Verify & Approve (PDF + SMS)' to credit the student balance, generate the official PDF receipt, and send the PDF download link via SMS/WhatsApp.",
+              },
+              {
+                step: "4. Publish All Results & 15-Day Public Link",
+                desc: "Open 'Result Approvals' and click 'Publish All & Announce Results'. All students appear on https://aktp-portal.netlify.app/results with QR-verified Marks Cards signed by G. Akash, B.E. Public links stay active for 15 days and can be extended anytime via API.",
+              },
+            ].map((item) => (
+              <div key={item.step} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                <div className="font-bold text-navy-900">{item.step}</div>
+                <p className="text-xs text-slate-600 leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
           </div>
         </div>
       )}

@@ -24,6 +24,9 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS telegram_bot_token VARCHAR(255)",
             "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(120)",
             "ALTER TABLE institution_settings ADD COLUMN IF NOT EXISTS auto_notify_group_on_events BOOLEAN NOT NULL DEFAULT TRUE",
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS status VARCHAR(24) NOT NULL DEFAULT 'VERIFIED'",
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_by_user_id INTEGER",
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP",
         ):
             conn.execute(text(stmt))
     db = SessionLocal()

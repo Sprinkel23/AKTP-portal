@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import GEMINI_API_KEY
 from app.database import get_db
-from app.models import Announcement, Attendance, Examination, Mark, OtpCode, Parent, ResultApproval, SchoolClass, Student, Subject, Teacher, User
+from app.models import Announcement, Attendance, Examination, Fee, Mark, OtpCode, Parent, Payment, ResultApproval, SchoolClass, Student, Subject, Teacher, User
 from app.schemas import (
     AiAssistantRequest,
     ContactInquiryRequest,
@@ -19,7 +19,7 @@ from app.schemas import (
 from app.security import create_signed_payload, decode_signed_payload, get_optional_user, log_audit
 from app.services.helpers import compute_class_rank, compute_grade, get_or_create_settings
 from app.services.notifications import build_direct_links, send_notification
-from app.services.pdf_generator import generate_marks_card_pdf, number_to_words, result_division
+from app.services.pdf_generator import generate_fee_receipt_pdf, generate_marks_card_pdf, number_to_words, result_division
 
 router = APIRouter(prefix="/api/public", tags=["Public"])
 
@@ -584,6 +584,43 @@ def download_public_marks_card_pdf(token: str = Query(...), db: Session = Depend
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="AK_MarksCard_{st.student_code}_Exam{ex.id}.pdf"'},
+    )
+
+
+@router.get("/fee-receipt/pdf")
+def download_public_fee_receipt_pdf(token: str = Query(...), db: Session = Depends(get_db)):
+    data = decode_signed_payload(token)
+    pid = data.get("pid")
+    pay = db.query(Payment).filter(Payment.id == pid, Payment.status == "VERIFIED").first()
+    if not pay:
+        raise HTTPException(status_code=404, detail="Verified fee receipt not found.")
+    settings = get_or_create_settings(db)
+    st = pay.student
+    fee = pay.fee
+    pdf_bytes = generate_fee_receipt_pdf(
+        tuition_name=settings.tuition_name,
+        tagline=settings.tagline,
+        address=settings.address,
+        phone=settings.phone,
+        logo_path=settings.logo_path,
+        receipt_number=pay.receipt.receipt_number if pay.receipt else f"AKR-{pay.id:04d}",
+        payment_date=pay.payment_date.strftime("%d %b %Y"),
+        student_name=st.student_name,
+        student_code=st.student_code,
+        class_name=f"{st.school_class.name} ({st.section})" if st.school_class else "",
+        parent_name=st.parent_name,
+        payment_mode=pay.payment_mode,
+        reference_number=pay.reference_number or "",
+        amount_paid=float(pay.amount),
+        total_fees=float(fee.total_fees),
+        total_paid_to_date=float(fee.paid_amount),
+        pending_amount=float(fee.pending_amount),
+        remarks=pay.remarks or "",
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="AK_FeeReceipt_{st.student_code}_{pay.id}.pdf"'},
     )
 
 

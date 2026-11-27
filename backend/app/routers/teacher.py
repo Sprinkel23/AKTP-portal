@@ -15,8 +15,10 @@ from app.models import (
     Examination,
     ExaminationSubject,
     Fee,
+    FeeReceipt,
     Mark,
     Parent,
+    Payment,
     Question,
     QuestionOption,
     QuestionPaper,
@@ -39,9 +41,10 @@ from app.schemas import (
     QuestionPaperCreate,
     TeacherAllSubjectsMarksEntry,
     TeacherDirectMarksEntry,
+    TeacherFeeCollectRequest,
     TeacherStudentCreate,
 )
-from app.security import hash_password, log_audit, require_roles
+from app.security import create_signed_payload, hash_password, log_audit, require_roles
 from app.services.helpers import (
     compute_class_rank,
     compute_grade,
@@ -55,7 +58,7 @@ from app.services.notifications import (
     gateway_status_summary,
     send_notification,
 )
-from app.services.pdf_generator import generate_branded_table_pdf, generate_question_paper_pdf
+from app.services.pdf_generator import generate_branded_table_pdf, generate_fee_receipt_pdf, generate_question_paper_pdf
 
 router = APIRouter(
     prefix="/api/teacher",
@@ -1316,6 +1319,192 @@ def create_question_paper(
     db.commit()
     db.refresh(qp)
     return {"id": qp.id, "title": qp.title}
+
+
+# ---------------- TEACHER FEE COLLECTION (PENDING ADMIN VERIFICATION) ----------------
+
+@router.get("/fees/collections")
+def list_teacher_fee_collections(
+    class_id: Optional[int] = None,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    st_q = db.query(Student).filter(Student.is_active == True)
+    if class_id:
+        st_q = st_q.filter(Student.class_id == class_id)
+    students = st_q.order_by(Student.class_id.asc(), Student.student_code.asc()).all()
+
+    student_rows = []
+    for st in students:
+        fee = db.query(Fee).filter(Fee.student_id == st.id).order_by(Fee.id.desc()).first()
+        tot_f = float(fee.total_fees) if fee else float(st.school_class.tuition_fee if st.school_class else 0)
+        paid_f = float(fee.paid_amount) if fee else 0.0
+        pend_f = float(fee.pending_amount) if fee else tot_f
+        student_rows.append({
+            "student_id": st.id,
+            "student_code": st.student_code,
+            "student_name": st.student_name,
+            "class_id": st.class_id,
+            "class_name": f"{st.school_class.name} ({st.section})" if st.school_class else "",
+            "parent_name": st.parent_name,
+            "parent_phone": st.parent_phone,
+            "total_fees": tot_f,
+            "paid_amount": paid_f,
+            "pending_amount": pend_f,
+        })
+
+    payments = (
+        db.query(Payment)
+        .order_by(Payment.created_at.desc(), Payment.id.desc())
+        .limit(120)
+        .all()
+    )
+    collections = []
+    for p in payments:
+        st = p.student
+        rec_no = p.receipt.receipt_number if p.receipt else None
+        pdf_tok = create_signed_payload({"pid": p.id}, expire_minutes=60 * 24 * 30) if p.status == "VERIFIED" else None
+        pdf_url = f"https://aktp-backend-production.up.railway.app/api/public/fee-receipt/pdf?token={pdf_tok}" if pdf_tok else None
+        msg = (
+            f"AK TUITION - FEE RECEIPT VERIFIED\n"
+            f"Receipt: {rec_no or f'AKR-{p.id}'}\n"
+            f"Student: {st.student_name if st else ''} ({st.student_code if st else ''})\n"
+            f"Paid: Rs. {float(p.amount):,.2f} ({p.payment_mode})\n"
+            f"Download PDF Receipt: {pdf_url}"
+            if pdf_url
+            else ""
+        )
+        links = build_direct_links(st.parent_phone if st else "", msg) if pdf_url and st else {"whatsapp_url": None, "sms_url": None}
+        collections.append({
+            "id": p.id,
+            "student_id": p.student_id,
+            "student_code": st.student_code if st else "",
+            "student_name": st.student_name if st else "",
+            "class_name": f"{st.school_class.name} ({st.section})" if st and st.school_class else "",
+            "parent_phone": st.parent_phone if st else "",
+            "amount": float(p.amount),
+            "payment_date": p.payment_date.isoformat(),
+            "payment_mode": p.payment_mode,
+            "reference_number": p.reference_number,
+            "remarks": p.remarks,
+            "status": p.status,
+            "receipt_number": rec_no,
+            "receipt_pdf_url": pdf_url,
+            "whatsapp_url": links["whatsapp_url"],
+            "sms_url": links["sms_url"],
+            "created_at": p.created_at.isoformat(),
+        })
+
+    return {"students": student_rows, "collections": collections}
+
+
+@router.post("/fees/collect")
+def teacher_collect_student_fee(
+    payload: TeacherFeeCollectRequest,
+    request: Request,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    t = _get_teacher(current_user, db)
+    st = db.query(Student).filter(Student.id == payload.student_id, Student.is_active == True).first()
+    if not st:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    valid_modes = {"CASH", "UPI", "BANK_TRANSFER", "OTHER"}
+    mode = payload.payment_mode.strip().upper().replace(" ", "_")
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"Payment mode must be one of: {', '.join(sorted(valid_modes))}.")
+
+    if payload.idempotency_key and db.query(Payment).filter(Payment.idempotency_key == payload.idempotency_key).first():
+        raise HTTPException(status_code=409, detail="Duplicate fee collection blocked.")
+
+    if payload.reference_number and db.query(Payment).filter(Payment.reference_number == payload.reference_number.strip()).first():
+        raise HTTPException(status_code=409, detail="A fee collection with this reference number already exists.")
+
+    fee = db.query(Fee).filter(Fee.student_id == st.id).order_by(Fee.id.desc()).first()
+    if not fee:
+        ay = db.query(AcademicYear).filter(AcademicYear.is_current == True).first() or db.query(AcademicYear).first()
+        base_fee = float(st.school_class.tuition_fee if st.school_class else 0)
+        fee = Fee(
+            student_id=st.id,
+            academic_year_id=ay.id,
+            total_fees=base_fee,
+            paid_amount=0,
+            pending_amount=base_fee,
+        )
+        db.add(fee)
+        db.flush()
+
+    pay = Payment(
+        fee_id=fee.id,
+        student_id=st.id,
+        amount=payload.amount,
+        payment_date=payload.payment_date or date.today(),
+        payment_mode=mode,
+        reference_number=payload.reference_number.strip() if payload.reference_number else None,
+        idempotency_key=payload.idempotency_key,
+        remarks=payload.remarks or f"Collected by {t.teacher_name}",
+        status="PENDING",
+        recorded_by_user_id=current_user.id,
+    )
+    db.add(pay)
+    db.flush()
+
+    dispatch_group_workflow_event(
+        db,
+        event_type="FEE_COLLECTED_PENDING",
+        title="Fee Collected — Pending Admin Verification",
+        message=f"{t.teacher_name} collected Rs. {payload.amount:,.2f} ({mode}) from {st.student_name} ({st.student_code}). Sent to Admin for verification.",
+        entity_id=str(pay.id),
+    )
+    log_audit(db, current_user.id, "TEACHER_COLLECT_FEE", "payment", str(pay.id), {"student": st.student_code, "amount": payload.amount}, request)
+    db.commit()
+    return {
+        "id": pay.id,
+        "status": pay.status,
+        "message": f"Collected Rs. {payload.amount:,.2f} from {st.student_name} ({st.student_code}). Sent to Admin for verification.",
+    }
+
+
+@router.get("/fees/{payment_id}/receipt-pdf")
+def teacher_download_fee_receipt_pdf(
+    payment_id: int,
+    current_user: User = Depends(require_roles(["teacher"])),
+    db: Session = Depends(get_db),
+):
+    pay = db.query(Payment).filter(Payment.id == payment_id).first()
+    if not pay:
+        raise HTTPException(status_code=404, detail="Fee payment record not found.")
+    if pay.status != "VERIFIED":
+        raise HTTPException(status_code=400, detail="Official PDF receipt is generated only after Admin verifies the payment.")
+    settings = get_or_create_settings(db)
+    st = pay.student
+    fee = pay.fee
+    pdf_bytes = generate_fee_receipt_pdf(
+        tuition_name=settings.tuition_name,
+        tagline=settings.tagline,
+        address=settings.address,
+        phone=settings.phone,
+        logo_path=settings.logo_path,
+        receipt_number=pay.receipt.receipt_number if pay.receipt else f"AKR-{pay.id:04d}",
+        payment_date=pay.payment_date.strftime("%d %b %Y"),
+        student_name=st.student_name,
+        student_code=st.student_code,
+        class_name=f"{st.school_class.name} ({st.section})" if st.school_class else "",
+        parent_name=st.parent_name,
+        payment_mode=pay.payment_mode,
+        reference_number=pay.reference_number or "",
+        amount_paid=float(pay.amount),
+        total_fees=float(fee.total_fees),
+        total_paid_to_date=float(fee.paid_amount),
+        pending_amount=float(fee.pending_amount),
+        remarks=pay.remarks or "",
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="AK_FeeReceipt_{st.student_code}_{pay.id}.pdf"'},
+    )
 
 
 @router.get("/question-papers/{paper_id}/pdf")
